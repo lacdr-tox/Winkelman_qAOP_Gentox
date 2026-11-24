@@ -1,0 +1,256 @@
+---
+title: "Examine_extracted_data"
+author: "Levi Winkelman"
+date: "2025-12-17"
+output: html_document
+---
+
+
+This document contains the code used to provide an overview of the numbers of manuscripts identified through systematic literature search as well as the number of manuscripts for which data was extracted as described in 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+Read in libraries
+```{r}
+library(openxlsx)
+library(readxl)
+library(stringr)
+library(ggplot2)
+library(ggforce)
+library(dplyr)
+library(tidyr)
+source('Functions_data_wrangling.R')
+source('Functions_misc.R')
+```
+
+
+Prepare input data with identified manuscripts so that each manuscript gets an identifier
+```{r,message=F}
+firstEMS = as.data.frame(read_excel('../rawData/202512171417_database_TK6_EMS.xlsx', sheet = 'First_search'))
+firstEMS$DOI = ifelse(is.na(firstEMS$DOI), firstEMS$PMID, firstEMS$DOI)
+extEMS = as.data.frame(read_excel('../rawData/202512171417_database_TK6_EMS.xlsx', sheet = 'Extended_search'))
+extEMS$DOI = str_match(extEMS$Paper,"(?i)doi:\\s*(10\\.\\S+)")[,2]
+extEMS$DOI = ifelse(is.na(extEMS$DOI), extEMS$PMCID, extEMS$DOI)
+
+
+firstMMS = as.data.frame(read_excel('../rawData/202512171417_database_TK6_MMS.xlsx', sheet = 'First search'))
+firstMMS$DOI = ifelse(is.na(firstMMS$DOI), firstMMS$PMID, firstMMS$DOI)
+extMMS = as.data.frame(read_excel('../rawData/202512171417_database_TK6_MMS.xlsx', sheet = 'Extended search'))
+extMMS$DOI = ifelse(is.na(extMMS$DOI), extMMS$PMID, extMMS$DOI)
+
+
+firstENU = as.data.frame(read_excel('../rawData/202512171417_database_TK6_ENU.xlsx', sheet = 'First search'))
+firstENU$DOI = ifelse(is.na(firstENU$DOI), firstENU$PMID, firstEMS$DOI)
+extENU = as.data.frame(read_excel('../rawData/202512171417_database_TK6_ENU.xlsx', sheet = 'Extended search'))
+extENU$DOI = ifelse(is.na(extENU$DOI), extENU$PMID, extENU$DOI)
+```
+
+Obtain the number of unique manuscripts in both first and extended data searches
+```{r}
+uniqTotalEMS = length(unique(na.omit(c(firstEMS$DOI, extEMS$DOI))))
+uniqTotalMMS = length(unique(na.omit(c(firstMMS$DOI, extMMS$DOI))))
+uniqTotalENU = length(unique(na.omit(c(firstENU$DOI, extENU$DOI))))
+```
+
+Obtain the number of unique manuscripts from the first search only
+```{r}
+uniqFirstEMS = length(unique(na.omit(firstEMS$DOI)))
+uniqFirstMMS = length(unique(na.omit(firstMMS$DOI)))
+uniqFirstENU = length(unique(na.omit(firstENU$DOI)))
+```
+
+Obtain the identifiers of manuscripts for which extraction was performed for EMS
+```{r,message=F}
+EMScomet= as.data.frame(read_excel('../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx', sheet = 'Comet assay'))
+EMSgh2ax= as.data.frame(read_excel('../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx', sheet = 'gH2AX assay'))
+EMSMN= as.data.frame(read_excel('../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx', sheet = 'Micronucleus assay'))
+EMSmuta= as.data.frame(read_excel('../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx', sheet = 'Forward gene mutation assay'))
+EMSalkyl= as.data.frame(read_excel('../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx', sheet = 'Alkylation assay'))
+
+EMSdfs = list(EMScomet, EMSgh2ax, EMSMN, EMSmuta, EMSalkyl)
+names(EMSdfs) = c('comet', 'gh2ax', 'MN', 'muta', 'alkyl')
+unique_refsEMS = unique(unlist(lapply(EMSdfs, function(x) x$Reference)))
+
+EMSdfs = lapply(EMSdfs, generalwrangle)
+```
+
+Obtain the identifiers of manuscripts for which extraction was performed for MMS
+```{r,message=F}
+MMScomet= as.data.frame(read_excel('../rawData/202604141723_Data_from_literature_search_MMS_TK6.xlsx', sheet = 'Comet assay'))
+MMSgh2ax= as.data.frame(read_excel('../rawData/202604141723_Data_from_literature_search_MMS_TK6.xlsx', sheet = 'gH2AX assay'))
+MMSMN= as.data.frame(read_excel('../rawData/202604141723_Data_from_literature_search_MMS_TK6.xlsx', sheet = 'Micronucleus assay'))
+MMSmuta= as.data.frame(read_excel('../rawData/202604141723_Data_from_literature_search_MMS_TK6.xlsx', sheet = 'Forward gene mutation assay'))
+MMSCA= as.data.frame(read_excel('../rawData/202604141723_Data_from_literature_search_MMS_TK6.xlsx', sheet = 'Chromosome aberration assay'))
+
+MMSdfs = list(MMScomet, MMSgh2ax, MMSMN, MMSmuta, MMSCA)
+names(MMSdfs) = c('comet', 'gh2ax', 'MN', 'muta', 'CA')
+unique_refsMMS = unique(unlist(lapply(MMSdfs, function(x) x$Reference)))
+
+MMSdfs = lapply(MMSdfs, generalwrangle, conc_col = "Concentration MMS")
+```
+
+Obtain the identifiers of manuscripts for which extraction was performed for ENU
+```{r,message=F}
+ENUcomet= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'Comet assay'))
+ENUgh2ax= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'gH2AX assay'))
+ENUMN= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'Micronucleus assay'))
+ENUmuta= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'Forward gene mutation assay'))
+ENUCA= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'Chromosome aberration assay'))
+ENUECDS= as.data.frame(read_excel('../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx', sheet = 'EC DS based mutation assay'))
+
+ENUdfs = list(ENUcomet, ENUgh2ax, ENUMN, ENUmuta, ENUCA, ENUECDS)
+names(ENUdfs) = c('comet', 'gh2ax', 'MN', 'muta', 'CA', 'ECDS')
+unique_refsENU = unique(unlist(lapply(ENUdfs, function(x) x$Reference)))
+
+ENUdfs = lapply(ENUdfs, generalwrangle, conc_col = "Concentration ENU")
+```
+
+Store information of all extracted data into a single dataframe
+```{r}
+EMS_df = bind_rows(
+  lapply(EMSdfs, \(df) df %>% select(Author, Year, DOI)),
+  .id = "Assay"
+) %>%
+  mutate(Compound = "EMS")
+
+MMS_df = bind_rows(
+  lapply(MMSdfs, \(df) df %>% select(Author, Year, DOI)),
+  .id = "Assay"
+) %>%
+  mutate(Compound = "MMS")
+
+ENU_df = bind_rows(
+  lapply(ENUdfs, \(df) df %>% select(Author, Year, DOI)),
+  .id = "Assay"
+) %>%
+  mutate(Compound = "ENU")
+
+combined_df = bind_rows(
+  EMS_df,
+  MMS_df,
+  ENU_df
+) %>%
+  group_by(DOI) %>%
+  summarise(
+    Author = first(Author),
+    Year = first(Year),
+    Compound = paste(unique(Compound), collapse = ", "),
+    Assay = paste(unique(Assay), collapse = ", "),
+    Reference = first(DOI),
+    .groups = "drop"
+  ) %>%
+  select(Author, Year, Compound, Assay, Reference)
+```
+
+```{r}
+combined_df = combined_df[combined_df$Reference != 'Unpublished',]
+```
+
+Obtain the number of unique manuscripts for which extraction was performed per compound
+```{r}
+uniqExtrEMS = length(unique_refsEMS)
+uniqExtrMMS = length(unique_refsMMS)
+uniqExtrENU = length(unique_refsENU)
+```
+
+Write the dataframe to an excel sheet
+```{r}
+write.xlsx(combined_df, '../ProcessedData/S3.xlsx')
+```
+
+
+
+Fig1D
+```{r}
+df = data.frame(
+  compound = c("EMS", "MMS", "ENU"),
+  identified = c(uniqTotalEMS, uniqTotalMMS, uniqTotalENU),
+  extracted = c(uniqExtrEMS, uniqExtrMMS, uniqExtrENU)
+)
+
+```
+
+```{r}
+df_long = df %>%
+  mutate(not_extracted = identified - extracted) %>%
+  pivot_longer(
+    cols = c(extracted, not_extracted),
+    names_to = "category",
+    values_to = "count"
+  )
+
+
+pie_EMS = make_pie("EMS", df_long)
+pie_MMS = make_pie("MMS", df_long)
+pie_ENU = make_pie("ENU", df_long)
+
+pie_EMS
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_EMS_Extraction.png', width = 3, height = 2.2)
+
+pie_MMS
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_MMS_Extraction.png', width = 3, height = 2.2)
+
+pie_ENU
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_ENU_Extraction.png', width = 3, height = 2.2)
+
+```
+
+
+--part 2 for pubmed vs PMC--
+
+Fig. 1C
+```{r}
+df = data.frame(
+  compound = c("EMS", "MMS", "ENU"),
+  Total = c(uniqTotalEMS, uniqTotalMMS, uniqTotalENU),
+  PubMed = c(uniqFirstEMS, uniqFirstMMS, uniqFirstENU)
+)
+
+```
+
+```{r}
+df_long = df %>%
+  mutate(PMC = Total - PubMed) %>%
+  pivot_longer(
+    cols = c(PMC, PubMed),
+    names_to = "category",
+    values_to = "count" 
+  ) 
+
+colors = c(
+  PubMed = "steelblue",
+  PMC = "grey80"
+)
+
+
+pie_EMS = make_pie2("EMS", df_long)
+pie_MMS = make_pie2("MMS", df_long)
+pie_ENU = make_pie2("ENU", df_long)
+
+pie_EMS
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_EMS_Search.png', width = 2.4, height = 1.76)
+
+pie_MMS
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_MMS_Search.png', width = 2.4, height = 1.76)
+
+pie_ENU
+ggsave('../Figures/PieCharts_litSearch/Fig1/pie_ENU_Search.png', width = 2.4, height = 1.76)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

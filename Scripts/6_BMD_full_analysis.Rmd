@@ -1,0 +1,683 @@
+---
+title: "Untitled"
+author: "Levi Winkelman"
+date: "2025-11-12"
+output: html_document
+---
+
+
+This document takes as input the wrangled data for all available combinations of biological assay and compound. First we define subsets for each assay-compound combination based on experimental design. Then datasets of the same biological design are merged and subsequently used for BMD analysis using the process_subset code. BMD analysis is performed using a BMR of 50% increase relative to background as well as a BMR of 1 SD elevation relative to background. The plots generated in this script were used as the basis for Figure 4 and Figure S4 presented in: 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+Loading packages
+```{r,warning=F, message=F}
+library(minpack.lm)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(patchwork)
+library(purrr)
+library(tidyr)
+library(stringr)
+source('Functions_BMD.R')
+```
+
+Reading in the data
+```{r}
+EMSdata = readRDS('../processedData/EMSdata.rds')
+MMSdata = readRDS('../processedData/MMSdata.rds')
+ENUdata = readRDS('../processedData/ENUdata.rds')
+```
+
+Some final data wrangling to optimize for BMD analysis
+```{r}
+#Get rid of CAA for MMS
+MMSdata[['CAA']] = NULL
+
+#Initialize missing columns
+ENUdata$comet$enzyme_modification = 'Unmodified'
+ENUdata$comet$`Relative survival (%)` = NA
+ENUdata$MN$S9 = 'no'
+ENUdata$gh2ax$S9 = 'no'
+
+#Split comet assay data into FPG and hAAG modified assays
+comets = split(EMSdata$cometall, EMSdata$cometall$enzyme_modification)
+names(comets) = paste("Comet", names(comets))
+EMSdata = c(EMSdata, comets)
+EMSdata$cometall = NULL
+
+comets = split(MMSdata$cometall, MMSdata$cometall$enzyme_modification)
+names(comets) = paste("Comet", names(comets))
+MMSdata = c(MMSdata, comets)
+MMSdata$cometall = NULL
+```
+
+
+#BMD50 based approach
+```{r, warning=FALSE}
+EMS_subsets = lapply(names(EMSdata), function(assay_name) {
+  
+  df = EMSdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(EMS_subsets) = names(EMSdata)
+
+EMS_results = list()
+EMS_wpinput = list()
+EMS_wps = list()
+EMS_names = character()
+
+for (assay_name in names(EMS_subsets)) {
+  
+  subsets_tbl = EMS_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'EMS'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    EMS_results[[length(EMS_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #EMS_wps[[length(EMS_wps) + 1]] = res$boot_long
+    EMS_wpinput[[length(EMS_wpinput) + 1]] = res$wpinput
+    
+    EMS_names = c(EMS_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+#names(EMS_wps) = EMS_names
+names(EMS_wpinput) = EMS_names
+```
+
+
+```{r, warning=FALSE}
+MMS_subsets = lapply(names(MMSdata), function(assay_name) {
+  
+  df = MMSdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(MMS_subsets) = names(MMSdata)
+
+MMS_results = list()
+MMS_wpinput = list()
+MMS_wps = list()
+MMS_names = character()
+
+for (assay_name in names(MMS_subsets)) {
+  
+  subsets_tbl = MMS_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'MMS'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    MMS_results[[length(MMS_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #MMS_wps[[length(MMS_wps) + 1]] = res$boot_long
+    MMS_wpinput[[length(MMS_wpinput) + 1]] = res$wpinput
+    
+    MMS_names = c(MMS_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+#names(MMS_wps) = MMS_names
+names(MMS_wpinput) = MMS_names
+```
+
+
+
+```{r, warning=FALSE}
+ENU_subsets = lapply(names(ENUdata), function(assay_name) {
+  
+  df = ENUdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(ENU_subsets) = names(ENUdata)
+
+ENU_results = list()
+ENU_wpinput = list()
+ENU_wps = list()
+ENU_names = character()
+
+for (assay_name in names(ENU_subsets)) {
+  
+  subsets_tbl = ENU_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'ENU'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    ENU_results[[length(ENU_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #ENU_wps[[length(ENU_wps) + 1]] = res$boot_long
+    ENU_wpinput[[length(ENU_wpinput) + 1]] = res$wpinput
+    
+    ENU_names = c(ENU_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+#names(ENU_wps) = ENU_names
+names(ENU_wpinput) = ENU_names
+```
+
+
+
+```{r}
+saveRDS(EMS_wpinput, '../processedData/EMS_wpinput.rds')
+saveRDS(MMS_wpinput, '../processedData/MMS_wpinput.rds')
+saveRDS(ENU_wpinput, '../processedData/ENU_wpinput.rds')
+```
+
+
+```{r}
+saveRDS(EMS_subsets, '../processedData/EMS_subsets.rds')
+saveRDS(MMS_subsets, '../processedData/MMS_subsets.rds')
+saveRDS(ENU_subsets, '../processedData/ENU_subsets.rds')
+```
+
+
+
+```{r}
+# Combine all three
+df = bind_rows(
+  convert_results(EMS_results, "EMS"),
+  convert_results(MMS_results, "MMS"),
+  convert_results(ENU_results, "ENU")
+)
+
+# Add KE classification
+df = df %>%
+  mutate(
+    KE = case_when(
+      assay == "alkyl" ~ "KE adducts",
+      assay == "Comet hAAG modified" ~ "KE adducts",
+      assay == "Comet Fpg modified" ~ "KE oxidative stress",
+      assay == "Comet Unmodified" ~ "KE strand breaks",
+      assay == "gh2ax" ~ "KE strand breaks",
+      assay == "MN" ~ "KE chromosome aberrations",
+      assay %in% c("muta", "ECDS") ~ "KE heritable mutations",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+df = df %>%
+  mutate(
+    label = paste(assay, subset, sep = " | "),
+    label = str_replace(label, "\\|\\s*$", "")  # remove trailing |
+  )
+
+df = df[complete.cases(df),]
+
+df = df %>%
+  mutate(
+    label = paste(KE, assay, subset, sep = " | ")
+  )
+
+# Enforce order in the dataframe
+
+#order based on KE
+ke_order = c(
+  "KE adducts",
+  "KE oxidative stress",
+  "KE strand breaks",
+  "KE chromosome aberrations",
+  "KE heritable mutations"
+)
+
+df = df %>%
+  mutate(
+    KE = factor(KE, levels = ke_order)
+  ) %>%
+  arrange(KE, assay, subset) %>%
+ mutate(label = factor(label, levels = unique(label)))
+
+#Order based on assay
+df = df %>%
+  mutate(
+    assay_order = case_when(
+      assay == "alkyl" ~ 1,
+      assay == "Comet hAAG modified"  ~ 2,
+      assay == "Comet Fpg modified" ~ 3,
+      assay == "Comet Unmodified" ~ 4,
+      assay == "gh2ax" ~ 5,
+      assay == "MN" ~ 6,
+      assay %in% c("muta", "ECDS") ~ 7,
+      TRUE ~ 99
+    )
+  )
+
+#Order based on subset
+df = df %>%
+  mutate(
+    first_letter = substr(subset, 1, 1),
+    second_letter = substr(subset, 2, 2),
+
+    first_order = case_when(
+      first_letter == "L" ~ 1,
+      first_letter == "S" ~ 2,
+      TRUE ~ 3
+    ),
+
+    second_order = case_when(
+      second_letter == "L" ~ 1,
+      second_letter == "E" ~ 2,
+      second_letter == "I" ~ 3,
+      TRUE ~ 4
+    )
+  )
+
+df = df %>%
+  arrange(KE, assay_order, first_order, second_order, subset) %>%
+  mutate(label = factor(label, levels = unique(label)))
+
+df50 = df
+df50 = df50 %>%
+  filter(if_all(c(BMD, BMD_low, BMD_high), is.finite))
+
+write.csv(df50, '../processedData/BMD50ress.csv')
+```
+
+
+```{r}
+plot_EMS = plot_BMDresults(filter(df50, compound == "EMS"))
+plot_MMS = plot_BMDresults(filter(df50, compound == "MMS"))
+plot_ENU = plot_BMDresults(filter(df50, compound == "ENU"))
+```
+
+```{r}
+plot_EMS_labeled = plot_BMDresults(filter(df50, compound == "EMS"), y_mode = 'label')
+plot_MMS_labeled = plot_BMDresults(filter(df50, compound == "MMS"), y_mode = 'label')
+plot_ENU_labeled = plot_BMDresults(filter(df50, compound == "ENU"), y_mode = 'label')
+```
+
+```{r}
+plot_EMS
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_EMS.png', height = 8, width = 6)
+plot_EMS_labeled
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_EMS_labeled.png', height = 8, width = 6)
+
+plot_MMS
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_MMS.png', height = 8, width = 6)
+plot_MMS_labeled
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_MMS_labeled.png', height = 8, width = 6)
+
+plot_ENU
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_ENU.png', height = 8, width = 6)
+plot_ENU_labeled
+ggsave('../Figures/BMD/BMD_comparison/Fig4/BMD50_ENU_labeled.png', height = 8, width = 6)
+```
+
+
+
+
+#BMDSD based approach
+
+
+```{r, warning=FALSE}
+EMS_subsets = lapply(names(EMSdata), function(assay_name) {
+  
+  df = EMSdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(EMS_subsets) = names(EMSdata)
+
+EMS_results = list()
+EMS_wpinput = list()
+EMS_wps = list()
+EMS_names = character()
+
+for (assay_name in names(EMS_subsets)) {
+  
+  subsets_tbl = EMS_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'EMS',
+      BMR = 'SD'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    EMS_results[[length(EMS_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #EMS_wps[[length(EMS_wps) + 1]] = res$boot_long
+    EMS_wpinput[[length(EMS_wpinput) + 1]] = res$wpinput
+    
+    EMS_names = c(EMS_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+names(EMS_wpinput) = EMS_names
+```
+
+
+```{r, warning=FALSE}
+MMS_subsets = lapply(names(MMSdata), function(assay_name) {
+  
+  df = MMSdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(MMS_subsets) = names(MMSdata)
+
+MMS_results = list()
+MMS_wpinput = list()
+MMS_wps = list()
+MMS_names = character()
+
+for (assay_name in names(MMS_subsets)) {
+  
+  subsets_tbl = MMS_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'MMS',
+      BMR = 'SD'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    MMS_results[[length(MMS_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #MMS_wps[[length(MMS_wps) + 1]] = res$boot_long
+    MMS_wpinput[[length(MMS_wpinput) + 1]] = res$wpinput
+    
+    MMS_names = c(MMS_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+names(MMS_wpinput) = MMS_names
+```
+
+
+```{r, warning=FALSE}
+ENU_subsets = lapply(names(ENUdata), function(assay_name) {
+  
+  df = ENUdata[[assay_name]]
+  
+  generate_subsets(df, assay_name)
+  
+})
+
+names(ENU_subsets) = names(ENUdata)
+
+ENU_results = list()
+ENU_wpinput = list()
+ENU_wps = list()
+ENU_names = character()
+
+for (assay_name in names(ENU_subsets)) {
+  
+  subsets_tbl = ENU_subsets[[assay_name]]
+  
+  for (i in seq_len(nrow(subsets_tbl))) {
+    
+    res = process_subset(
+      df = subsets_tbl$data[[i]],
+      assay_name = assay_name,
+      subset_name = subsets_tbl$subset_name[i],
+      conc_col = "Concentration",
+      compound = 'ENU',
+      BMR = 'SD'
+    )
+    
+    # Skip invalid subsets
+    if (is.null(res)) next
+    
+    ENU_results[[length(ENU_results) + 1]] = data.frame(
+      assay   = assay_name,
+      subset  = subsets_tbl$subset_name[i],
+      BMD_low = res$bmdres$BMD_low,
+      BMD_high= res$bmdres$BMD_high,
+      BMD     = res$bmdres$BMD
+    )
+    
+
+    #ENU_wps[[length(ENU_wps) + 1]] = res$boot_long
+    ENU_wpinput[[length(ENU_wpinput) + 1]] = res$wpinput
+    
+    ENU_names = c(ENU_names, paste(assay_name, subsets_tbl$subset_name[i], sep = "_"))
+  }
+}
+
+names(ENU_wpinput) = ENU_names
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+# Combine all three
+df = bind_rows(
+  convert_results(EMS_results, "EMS"),
+  convert_results(MMS_results, "MMS"),
+  convert_results(ENU_results, "ENU")
+)
+
+# Add KE classification
+df = df %>%
+  mutate(
+    KE = case_when(
+      assay == "alkyl" ~ "KE adducts",
+      assay == "Comet hAAG modified" ~ "KE adducts",
+      assay == "Comet Fpg modified" ~ "KE oxidative stress",
+      assay == "Comet Unmodified" ~ "KE strand breaks",
+      assay == "gh2ax" ~ "KE strand breaks",
+      assay == "MN" ~ "KE chromosome aberrations",
+      assay %in% c("muta", "ECDS") ~ "KE heritable mutations",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+df = df %>%
+  mutate(
+    label = paste(assay, subset, sep = " | "),
+    label = str_replace(label, "\\|\\s*$", "")  # remove trailing |
+  )
+
+df = df[complete.cases(df),]
+
+df = df %>%
+  mutate(
+    label = paste(KE, assay, subset, sep = " | ")
+  )
+
+# Enforce order in the dataframe
+
+#order based on KE
+ke_order = c(
+  "KE adducts",
+  "KE oxidative stress",
+  "KE strand breaks",
+  "KE chromosome aberrations",
+  "KE heritable mutations"
+)
+
+df = df %>%
+  mutate(
+    KE = factor(KE, levels = ke_order)
+  ) %>%
+  arrange(KE, assay, subset) %>%
+ mutate(label = factor(label, levels = unique(label)))
+
+#Order based on assay
+df = df %>%
+  mutate(
+    assay_order = case_when(
+      assay == "alkyl" ~ 1,
+      assay %in% c("Comet hAAG modified", "Comet Fpg modified") ~ 2,
+      assay == "Comet Unmodified" ~ 3,
+      assay == "gh2ax" ~ 4,
+      assay == "MN" ~ 5,
+      assay %in% c("muta", "ECDS") ~ 6,
+      TRUE ~ 99
+    )
+  )
+
+#Order based on subset
+df = df %>%
+  mutate(
+    first_letter = substr(subset, 1, 1),
+    second_letter = substr(subset, 2, 2),
+
+    first_order = case_when(
+      first_letter == "L" ~ 1,
+      first_letter == "S" ~ 2,
+      TRUE ~ 3
+    ),
+
+    second_order = case_when(
+      second_letter == "L" ~ 1,
+      second_letter == "E" ~ 2,
+      second_letter == "I" ~ 3,
+      TRUE ~ 4
+    )
+  )
+
+df = df %>%
+  arrange(KE, assay_order, first_order, second_order, subset) %>%
+  mutate(label = factor(label, levels = unique(label)))
+
+dfSD = df
+dfSD = dfSD %>%
+  filter(if_all(c(BMD, BMD_low, BMD_high), is.finite))
+
+write.csv(dfSD, '../processedData/BMDSDress.csv')
+```
+
+```{r}
+plot_EMS = plot_BMDresults(filter(dfSD, compound == "EMS"))
+plot_MMS = plot_BMDresults(filter(dfSD, compound == "MMS"))
+plot_ENU = plot_BMDresults(filter(dfSD, compound == "ENU"))
+```
+
+```{r}
+plot_EMS_labeled = plot_BMDresults(filter(dfSD, compound == "EMS"), y_mode = 'label')
+plot_MMS_labeled = plot_BMDresults(filter(dfSD, compound == "MMS"), y_mode = 'label')
+plot_ENU_labeled = plot_BMDresults(filter(dfSD, compound == "ENU"), y_mode = 'label')
+```
+
+```{r}
+plot_EMS
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_EMS.png', height = 8, width = 6)
+plot_EMS_labeled
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_EMS_labeled.png', height = 8, width = 6)
+
+plot_MMS
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_MMS.png', height = 8, width = 6)
+plot_MMS_labeled
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_MMS_labeled.png', height = 8, width = 6)
+
+plot_ENU
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_ENU.png', height = 8, width = 6)
+plot_ENU_labeled
+ggsave('../Figures/BMD/BMD_comparison/FigS4/BMDSD_ENU_labeled.png', height = 8, width = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,39 @@
+"","compound","assay","subset","BMD","BMD_low","BMD_high","KE","label","assay_order","first_letter","second_letter","first_order","second_order"
+"1","EMS","alkyl","SIO",43.553839031916,0.117938500366622,442.518354093829,"KE adducts","KE adducts | alkyl | SIO",1,"S","I",2,3
+"2","EMS","Comet hAAG modified","SIM",3.68122238085743,0.414119551017454,31.4754164930124,"KE adducts","KE adducts | Comet hAAG modified | SIM",2,"S","I",2,3
+"3","MMS","Comet hAAG modified","SIM",0,0,1.62203044805957,"KE adducts","KE adducts | Comet hAAG modified | SIM",2,"S","I",2,3
+"4","MMS","Comet Fpg modified","SIM",0,0,4.44286068327988,"KE oxidative stress","KE oxidative stress | Comet Fpg modified | SIM",3,"S","I",2,3
+"5","EMS","Comet Unmodified","LIM",33.9755272972236,11.8438715285991,115.122479571942,"KE strand breaks","KE strand breaks | Comet Unmodified | LIM",4,"L","I",1,3
+"6","MMS","Comet Unmodified","LIM",34.8853664480494,24.2803164031128,41.4943764484537,"KE strand breaks","KE strand breaks | Comet Unmodified | LIM",4,"L","I",1,3
+"7","EMS","Comet Unmodified","SIM",142.400326273667,7.19558884032668,705.368519149172,"KE strand breaks","KE strand breaks | Comet Unmodified | SIM",4,"S","I",2,3
+"8","MMS","Comet Unmodified","SIM",7.30715553108326,1.10154271442827,34.1060604188932,"KE strand breaks","KE strand breaks | Comet Unmodified | SIM",4,"S","I",2,3
+"9","EMS","gh2ax","LIF",35.0376794581811,31.1486263624724,39.9357203632879,"KE strand breaks","KE strand breaks | gh2ax | LIF",5,"L","I",1,3
+"10","MMS","gh2ax","LIF",5.22359850492211,4.40692542101522,6.24566139163291,"KE strand breaks","KE strand breaks | gh2ax | LIF",5,"L","I",1,3
+"11","ENU","gh2ax","LIF",10.916838715239,9.13685881185032,13.3883625317513,"KE strand breaks","KE strand breaks | gh2ax | LIF",5,"L","I",1,3
+"12","MMS","gh2ax","LIM",0.746795473179895,0.270279745322631,1.77377671642662,"KE strand breaks","KE strand breaks | gh2ax | LIM",5,"L","I",1,3
+"13","ENU","gh2ax","LIM",25.627753298271,8.09499482977529,114.956767913583,"KE strand breaks","KE strand breaks | gh2ax | LIM",5,"L","I",1,3
+"14","EMS","gh2ax","SIF",132.796020245993,119.960509342377,145.405410941656,"KE strand breaks","KE strand breaks | gh2ax | SIF",5,"S","I",2,3
+"15","MMS","gh2ax","SIF",22.8249371893511,18.2925860375552,27.467055617471,"KE strand breaks","KE strand breaks | gh2ax | SIF",5,"S","I",2,3
+"16","ENU","gh2ax","SIF",7.74684739803846,6.58268264729131,9.14508236699577,"KE strand breaks","KE strand breaks | gh2ax | SIF",5,"S","I",2,3
+"17","EMS","MN","LEMB",45.5215800885346,32.933771227087,80.4377506869787,"KE chromosome aberrations","KE chromosome aberrations | MN | LEMB",6,"L","E",1,2
+"18","MMS","MN","LEMC",4.73027336914702,2.13212811210704,7.72480172494624,"KE chromosome aberrations","KE chromosome aberrations | MN | LEMC",6,"L","E",1,2
+"19","EMS","MN","LIFC",32.4039978493533,10.939500584842,52.4076902823729,"KE chromosome aberrations","KE chromosome aberrations | MN | LIFC",6,"L","I",1,3
+"20","MMS","MN","LIFC",2.45255677237785,1.11491391039623,5.38486835496354,"KE chromosome aberrations","KE chromosome aberrations | MN | LIFC",6,"L","I",1,3
+"21","ENU","MN","LIFC",34.2230564772023,18.3115417361243,50.2943463522961,"KE chromosome aberrations","KE chromosome aberrations | MN | LIFC",6,"L","I",1,3
+"22","MMS","MN","LIMB",11.3907054037724,1.19558955030327,21.2072331720249,"KE chromosome aberrations","KE chromosome aberrations | MN | LIMB",6,"L","I",1,3
+"23","MMS","MN","LIMC",6.95399943116485,2.43965005680919,17.2202692496843,"KE chromosome aberrations","KE chromosome aberrations | MN | LIMC",6,"L","I",1,3
+"24","MMS","MN","SEFC",5.29865300689355,2.36877632181606,11.3644875543381,"KE chromosome aberrations","KE chromosome aberrations | MN | SEFC",6,"S","E",2,2
+"25","ENU","MN","SEFC",137.38825253043,67.2478675729642,239.042032622638,"KE chromosome aberrations","KE chromosome aberrations | MN | SEFC",6,"S","E",2,2
+"26","EMS","MN","SEMB",1823.60395662679,292.764398548324,3604.11713466795,"KE chromosome aberrations","KE chromosome aberrations | MN | SEMB",6,"S","E",2,2
+"27","EMS","MN","SEMC",64.9100769334961,21.705888947698,131.424149606007,"KE chromosome aberrations","KE chromosome aberrations | MN | SEMC",6,"S","E",2,2
+"28","MMS","MN","SEMC",15.5470322332712,7.91956996288512,21.3403365855657,"KE chromosome aberrations","KE chromosome aberrations | MN | SEMC",6,"S","E",2,2
+"29","EMS","muta","LLOH",0.541348403289517,0,1.13178986678556,"KE heritable mutations","KE heritable mutations | muta | LLOH",7,"L","L",1,1
+"30","ENU","muta","LLOH",0,0,26.1115625618446,"KE heritable mutations","KE heritable mutations | muta | LLOH",7,"L","L",1,1
+"31","EMS","muta","LLOT",0.639053368192412,0.000810602023154346,1.91421065759022,"KE heritable mutations","KE heritable mutations | muta | LLOT",7,"L","L",1,1
+"32","ENU","muta","LLOT",2.05817937182062,6.59479146609986e-05,24.0947072457228,"KE heritable mutations","KE heritable mutations | muta | LLOT",7,"L","L",1,1
+"33","ENU","ECDS","LEOT",39.3781852337124,34.3604969647856,45.2452743724511,"KE heritable mutations","KE heritable mutations | ECDS | LEOT",7,"L","E",1,2
+"34","ENU","ECDS","LIOW",289.239466312093,213.906573056024,350.074615192525,"KE heritable mutations","KE heritable mutations | ECDS | LIOW",7,"L","I",1,3
+"35","EMS","muta","SLOH",29.7690242009448,0.0396304875462715,88.3630471787397,"KE heritable mutations","KE heritable mutations | muta | SLOH",7,"S","L",2,1
+"36","EMS","muta","SEOH",67.4399456799746,8.59792009014461,108.941116912331,"KE heritable mutations","KE heritable mutations | muta | SEOH",7,"S","E",2,2
+"37","EMS","muta","SEOT",65.9833927832064,0,88.0610596554498,"KE heritable mutations","KE heritable mutations | muta | SEOT",7,"S","E",2,2
+"38","MMS","muta","SEOT",2.08442489405124,0.22486169095176,6.00975000481928,"KE heritable mutations","KE heritable mutations | muta | SEOT",7,"S","E",2,2

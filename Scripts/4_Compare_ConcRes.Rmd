@@ -1,0 +1,94 @@
+---
+title: "Untitled"
+author: "Levi Winkelman"
+date: "2026-02-12"
+output: html_document
+---
+
+This document contains the code used for visualizing concentration-response curves side by side across compounds and experimental conditions. The resulting figures form the basis for Figure 2 in 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+
+```{r,warning=F,message=F}
+library(stringr)
+library(dplyr)
+library(stringr)
+library(tibble)
+library(purrr)
+library(RColorBrewer)
+library(viridis)
+library(ggplot2)
+library(tidytext)
+library(tidyr)
+library(lme4)
+library(forcats)
+source('Functions_data_wrangling.R')
+```
+
+
+
+#Visualization of groups
+
+```{r}
+EMSdata = readRDS('../processedData/EMSdata.rds')
+MMSdata = readRDS('../processedData/MMSdata.rds')
+ENUdata = readRDS('../processedData/ENUdata.rds')
+```
+
+```{r}
+comets = list(EMSdata$comet, MMSdata$comet, ENUdata$comet)
+MNs = list(EMSdata$MN, MMSdata$MN, ENUdata$MN)
+gh2axs = list(EMSdata$gh2ax, MMSdata$gh2ax, ENUdata$gh2ax)
+mutations = list(EMSdata$mutation, MMSdata$mutation, ENUdata$mutation)
+
+comets = list(EMSdata$comet, MMSdata$comet, ENUdata$comet)
+MNs = list(EMSdata$MN, MMSdata$MN, ENUdata$MN)
+gh2axs = list(EMSdata$gh2ax, MMSdata$gh2ax, ENUdata$gh2ax)
+mutas = list(EMSdata$muta, MMSdata$muta, ENUdata$muta)
+
+names(comets) = names(MNs) = names(gh2axs) = names(mutas) = c('EMS','MMS','ENU')
+```
+
+
+```{r,warning=F}
+doseres_contrast_multi(comets, title = '', assay = 'Comet_Assay', color_col = 'Time of exposure [h]', shape_col = 'Scoring automation', linetype_col = 'Outcome unit (eg % of DNA in tail)', solid_level = '% DNA in tail')
+```
+
+
+
+```{r}
+ggsave('../Figures/ConcRes_comparison/Fig2/Comets.png', height = 5, width = 10)
+```
+
+
+```{r}
+doseres_contrast_multi(MNs, title = '', assay = 'MN_Assay', color_col = 'Time of exposure [h]', linetype_col = "Assay type", solid_level = 'conventional', shape_col = 'Scoring technique')
+```
+
+```{r}
+ggsave('../Figures/ConcRes_comparison/Fig2/MNs.png', height = 5, width = 10)
+```
+
+
+```{r}
+gh2axs$ENU$S9 = 'no'
+doseres_contrast_multi(gh2axs, title = '', assay = 'γH2AX_Assay', color_col = 'Time of exposure [h]', linetype_col = "Scoring technique", solid_level = 'Flow cytometry', shape_col = 'S9')
+```
+
+```{r}
+ggsave('../Figures/ConcRes_comparison/Fig2/gh2axs.png', height = 5, width = 10)
+```
+
+```{r}
+#Get rid of unusual gene loci used for the EMS study
+mutas$EMS = mutas$EMS[mutas$EMS$`Gene locus` %in% c('TK', 'HPRT', 'PIG-A'),]
+
+doseres_contrast_multi(mutas, title = '', assay = 'Mutation_Assay', color_col = 'Time of exposure [h]', shape_col = "Gene locus" )
+```
+
+```{r}
+ggsave('../Figures/ConcRes_comparison/Fig2/mutas.png', height = 5, width = 10)
+```
+
+
+
+

@@ -1,0 +1,136 @@
+---
+title: "Untitled"
+author: "Levi Winkelman"
+date: "2026-04-28"
+output: html_document
+---
+
+This document contains the code used for keeping track of the number of unique manuscripts, unique concentration response studies within those manuscripts and number of unique observations within those concentration response studies as described in 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+Read in libraries
+```{r}
+library(dplyr)
+source('Functions_misc.R')
+```
+
+Read in data
+```{r}
+EMSdata = readRDS('../processedData/EMSdata.rds')
+MMSdata = readRDS('../processedData/MMSdata.rds')
+ENUdata = readRDS('../processedData/ENUdata.rds')
+```
+
+Some last data wrangling
+```{r}
+#Get rid of CAA for MMS
+MMSdata[['CAA']] = NULL
+
+#Initialize missing columns
+ENUdata$comet$enzyme_modification = 'Unmodified'
+ENUdata$comet$`Relative survival (%)` = NA
+ENUdata$MN$S9 = 'no'
+ENUdata$gh2ax$S9 = 'no'
+
+comets = split(EMSdata$comet, EMSdata$comet$enzyme_modification)
+names(comets) = paste("Comet", names(comets))
+EMSdata = c(EMSdata, comets)
+EMSdata$comet = NULL
+EMSdata$muta$expression_period = EMSdata$muta$`Expression period[days]`
+
+comets = split(MMSdata$comet, MMSdata$comet$enzyme_modification)
+names(comets) = paste("Comet", names(comets))
+MMSdata = c(MMSdata, comets)
+MMSdata$comet = NULL
+MMSdata$muta$expression_period = MMSdata$muta$`Expression period[days]`
+
+ENUdata$`Comet Unmodified` = ENUdata$comet
+```
+
+
+Provides the input for table S4
+```{r}
+dfs = list(EMSdata$alkyl, 
+        EMSdata$`Comet hAAG modified`, MMSdata$`Comet hAAG modified`,
+        EMSdata$`Comet Fpg modified`, MMSdata$`Comet Fpg modified`,
+        EMSdata$`Comet Unmodified`, MMSdata$`Comet Unmodified`, ENUdata$`Comet Unmodified`,
+        EMSdata$gh2ax, MMSdata$gh2ax, ENUdata$gh2ax,
+        EMSdata$MN, MMSdata$MN, ENUdata$MN,
+        EMSdata$muta, MMSdata$muta, ENUdata$muta,
+        ENUdata$ECDS)
+
+names(dfs) = c(
+  "EMS_alkyl",
+  "EMS_Comet hAAG modified", "MMS_Comet hAAG modified",
+  "EMS_Comet Fpg modified", "MMS_Comet Fpg modified",
+  "EMS_Comet Unmodified", "MMS_Comet Unmodified", "ENU_Comet Unmodified",
+  "EMS_gh2ax", "MMS_gh2ax", "ENU_gh2ax",
+  "EMS_MN", "MMS_MN", "ENU_MN",
+  "EMS_muta", "MMS_muta", "ENU_muta",
+  "ENU_ECDS"
+)
+
+SummaryS4 = lapply(dfs, summarize_all_factors)
+```
+
+
+
+Create the summary presented in supplementary table S5
+```{r}
+SummaryS5 = summarize_all_facs_specific(EMSdata$alkyl, 'Alkylation site')
+```
+
+Create the summary presented in supplementary table S6
+```{r}
+dfs = list(EMSdata$`Comet hAAG modified`, MMSdata$`Comet hAAG modified`,
+           EMSdata$`Comet Fpg modified`, MMSdata$`Comet Fpg modified`,
+           EMSdata$`Comet Unmodified`, MMSdata$`Comet Unmodified`, ENUdata$`Comet Unmodified`)
+  
+names(dfs) = c(
+  "EMS_Comet hAAG modified", "MMS_Comet hAAG modified",
+  "EMS_Comet Fpg modified", "MMS_Comet Fpg modified",
+  "EMS_Comet Unmodified", "MMS_Comet Unmodified", "ENU_Comet Unmodified"
+)
+  
+SummaryS6.1 = lapply(dfs, summarize_all_facs_specific, 'Technique for scoring (eg manual / automated)')
+SummaryS6.2 = lapply(dfs, summarize_all_facs_specific, 'Outcome unit (eg % of DNA in tail)')
+```
+
+Create the summary presented in supplementary table S7
+```{r}
+dfs = list(EMSdata$MN, MMSdata$MN, ENUdata$MN)
+
+names(dfs) = c('EMS_MN', 'MMS_MN', 'ENU_MN')
+
+SummaryS7 = lapply(dfs, summarize_all_facs_specific, 'Assay type')
+```
+
+Create the summary presented in supplementary table S8
+```{r}
+dfs = list(EMSdata$muta, MMSdata$muta, ENUdata$muta)
+
+names(dfs) = c('EMS_muta', 'MMS_muta', 'ENU_muta')
+
+SummaryS8 = lapply(dfs, summarize_all_facs_specific, 'Gene locus')
+```
+
+Create the summary presented in supplementary table S9
+```{r}
+SummaryS9 = summarize_all_facs_specific(ENUdata$ECDS, 'Target region')
+```
+
+Save the output
+```{r}
+saveRDS(SummaryS4, '../ProcessedData/SummaryS4.rds')
+saveRDS(SummaryS5, '../ProcessedData/SummaryS5.rds')
+saveRDS(SummaryS6.1, '../ProcessedData/SummaryS6.1.rds')
+saveRDS(SummaryS6.2, '../ProcessedData/SummaryS6.2.rds')
+saveRDS(SummaryS7, '../ProcessedData/SummaryS7.rds')
+saveRDS(SummaryS8, '../ProcessedData/SummaryS8.rds')
+saveRDS(SummaryS9, '../ProcessedData/SummaryS9.rds')
+```
+
+
+
+
+
+

@@ -1,0 +1,1358 @@
+---
+title: "Data_wrangling_TK6EMS"
+author: "Levi Winkelman"
+date: "2024-02-09"
+output: html_document
+---
+
+This document contains the code used for harmonizing and visualizing the raw EMS concentration-response data extracted from literature as described in 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+Reading in the required libraries
+```{r,warning=F, message=F}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(tibble)
+library(clinPK)
+library(ggplot2)
+library(mice)
+library(lme4)
+library(splines)
+library(lmerTest)
+library(partR2)
+library(stats)
+source('Functions_data_wrangling.R')
+```
+
+
+-----------
+Comet assay
+-----------
+
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r,message=F}
+#Read in the data
+comet = as.data.frame(read_excel(
+  '../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx',
+  sheet = 'Comet assay'))
+
+#Perform general wrangling 
+comet = generalwrangle(comet)
+
+#Convert data classess
+comet = correctclass(comet)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(comet)
+```
+
+Looks good
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+which(comet$`Outcome for the treatment` == 0)
+```
+Subtraction from background did not occur.
+
+Check if every observation has its own unique control
+```{r}
+sum(comet$`Concentration EMS` == 0)
+length(unique(comet$`Study index`))
+```
+Looks good
+
+Check for missing replicates
+```{r}
+table(comet$replicates, useNA = 'ifany')
+```
+Let's examine which study this is
+```{r}
+comet[,c(2:4)][is.na(comet$replicates),]
+```
+
+Only the Kimura study did not report a number of replicates, since we often see 50 cells per slide and 100 cells were reported, we will assume to have 2 replicates
+```{r}
+comet$replicates[comet$Author == 'Kimura et al'] = 2
+```
+
+Let's remove any studies with too few observations now
+```{r}
+comet = remove_few_obs_studies(comet)
+```
+
+
+
+##Check outcome units##
+
+```{r}
+table(comet$`Outcome unit (eg % of DNA in tail)`, useNA = 'ifany')
+```
+These all refer to the same type of response, so there is no need for further conversion / exclusion
+
+```{r}
+comet$`Outcome unit (eg % of DNA in tail)` = '% DNA in tail'
+```
+
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(comet$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+comet = convert_varest(comet)
+```
+
+
+Convert all responses to FC
+```{r}
+comet = convert_to_FC(comet)
+```
+
+Convert all concentrations to uM
+```{r}
+EMS_g_per_mol = 124.16
+comet = convert_concs(comet, EMS_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+comet = convert_CTassaytype(comet)
+```
+
+Standardize scoring techniques
+```{r}
+comet = convert_scoringTechnique(comet)
+```
+
+
+
+##Check for cytotoxicity
+
+```{r}
+table(comet$`Relative survival (%)`, useNA = 'ifany')
+```
+
+See where there is cytotoxicity data missing
+```{r}
+comet[,c(2:4)][is.na(comet$`Relative survival (%)`),]
+```
+
+
+Only the Nguyen paper had missing cytotox data, the concentration range used in Nguyen is contained within the range used in Shi which had survival rates of > 75% over the full range, the largely overlapping range used by Sanders et al for 24h of exposure is also non cytotoxic (survival rates of approx 100% over its full range). Therefore, all data from the Nguyen paper will be preserved
+
+```{r}
+comet$ct[is.na(comet$ct)] = T
+```
+
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(comet$ct) / nrow(comet)
+comet = comet[comet$ct == T,]
+```
+
+```{r}
+comet = remove_few_obs_studies(comet)
+```
+
+Split the data into the unmodified comet assay and the enzyme modified comet assays
+```{r}
+comet$enzyme_modification = rep(NA, nrow(comet))
+comet$enzyme_modification[comet$DOI == '10.1007/s00204-021-03102-3' & comet$Comments == "hAAG modified comet assay"] = 'hAAG modified'
+comet$enzyme_modification[comet$DOI == '10.1007/s00204-021-03102-3' & comet$Comments == "Fpg modified comet assay"] = 'Fpg modified'
+comet$enzyme_modification[is.na(comet$enzyme_modification)] = 'Unmodified'
+comet$enzyme_modification = as.factor(comet$enzyme_modification)
+```
+
+```{r}
+cometall = comet
+cometenz = comet[comet$enzyme_modification != 'Unmodified',]
+comet = comet[comet$enzyme_modification == 'Unmodified',]
+```
+
+
+
+##Plot data
+
+
+Define distinctive features of studies from the same paper
+```{r}
+comet$distinct = rep(NA, nrow(comet))
+
+#Sanders 2022 paper
+comet$distinct[comet$DOI == '10.1093/mutage/geac025' & comet$`Time of exposure [h]` == 3] = '3h exposure'
+comet$distinct[comet$DOI == '10.1093/mutage/geac025' & comet$`Time of exposure [h]` == 24] = '24h exposure'
+
+#Shi 2010 paper
+comet$distinct[comet$DOI == '10.1016/j.mrgentox.2010.01.008' & comet$`Time of exposure [h]` == 24] = '24h exposure'
+comet$distinct[comet$DOI == '10.1016/j.mrgentox.2010.01.008' & comet$`Time of exposure [h]` == 4] = '4h exposure'
+
+```
+
+Create a separate column to identify enzyme modified comet assays
+```{r}
+#Add a column to map scoring techniques to automated, semi-automated or manual
+comet = comet %>%
+  mutate(
+    `Scoring automation` = case_when(
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("manual") ~ "Manual",
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("CA4", "Semi-automated (Comet IV)") ~ "Semi-automated",
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("Automated (IMSTAR)", "clrmorph", "CeligoS", "Komet6", "Automated (CometScan)" ) ~ "Automated"
+    )
+  )
+```
+
+```{r}
+doseres_plot(comet, 'all data', assay = 'Comet_Assay')
+```
+
+We see a couple of interesting things from this plot:
+- The modified comet assay data from the Muruzabal studies seem much more sensitive compared to the unmodified versions of the assay
+- The Henderson study deviates from all other studies, probably because it has an extremely low exposure time compared to all other studies
+
+
+
+```{r}
+doseres_contrast(comet, 'Exposure times and scoring automation', assay = 'Comet_Assay', color_col = 'Time of exposure [h]', shape_col = 'Scoring automation', solid_level = 'Unmodified')
+```
+We can see generally see higher sensitivity and stronger responses for the longer exposure experiments compared to the shorter ones
+
+```{r}
+doseres_contrast(cometenz, 'Enzyme modification EMS', assay = 'Comet_Assay', color_col = 'enzyme_modification', save = T, path = '../Figures/ConcRes_comparison/FigS1')
+```
+
+
+
+#Variance decomposition
+
+```{r}
+cometmod = comet
+names(cometmod) = make.names(names(cometmod))
+```
+
+```{r}
+cometimp = mice(cometmod, m = 1, method = 'pmm', seed = 20260205)
+```
+
+
+```{r}
+cometimp2 = complete(cometimp, 1)[,c('Author', 'Study.index', 'FC', 'Concentration.EMS', 'Time.of.exposure..h.', 'Scoring.automation', 'Relative.survival....')]
+```
+
+```{r}
+any(is.na(cometimp2))
+
+cometimp2 = prepare_varcomp(cometimp2, cometmod)
+```
+
+```{r,message=F,warning=F}
+model_comet = lmer(
+  FClog ~ poly(Concentration.EMS, degree = 2) +
+       Time.of.exposure..h. +
+       Scoring.automation +
+       Relative.survival.... +
+    
+       (1|Author/DOI/Study.index),
+  data = cometimp2
+)
+
+vc = as.data.frame(VarCorr(model_comet))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+
+cometVAR = partR2(model_comet, partvars = c("poly(Concentration.EMS, degree = 2)",
+                               "Time.of.exposure..h.",
+                               "Scoring.automation",
+                               "Relative.survival...."))
+cometVAR$R2
+cometVAR$model = model_comet
+cometVAR$vc = vc
+```
+
+
+
+------------------
+Micronucleus assay
+------------------
+
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r,message=F}
+#Read in the data
+MN = as.data.frame(read_excel(
+  '../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx',
+  sheet = 'Micronucleus assay'))
+
+#Perform general wrangling 
+MN = generalwrangle(MN)
+
+#Convert data classess
+MN = correctclass(MN)
+```
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(MN)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+MN[which(MN$`Outcome for the treatment` == 0),]
+```
+
+We see no subtraction from background but two studies with a reported response of 0, this is likely due to the very high cytotoxicity reported for these concentrations, we can leave the rows in for now as they will be removed for cytotoxicity later
+
+
+Check if every observation has its own unique control
+```{r}
+sum(MN$`Concentration EMS` == 0)
+length(unique(MN$`Study index`))
+```
+We have more controls than study indexes, let's see if this is the case because we have raw datapoints
+
+```{r}
+any(MN$replicates == 1)
+```
+Indeed, let's try to summarize the individual measurements
+
+```{r}
+MN = ObsToMeans(MN, varOI = 'Study index', ct = T, varextra = NA)
+```
+
+Let's check if we still have more controls than datapoints
+
+```{r}
+sum(MN$`Concentration EMS` == 0)
+length(unique(MN$`Study index`))
+```
+Looks good
+
+
+Check for missing replicates
+```{r}
+table(MN$replicates, useNA = 'ifany')
+```
+
+Let's examine the studies for which we have missing replicates
+```{r}
+MN[,c(2:4)][is.na(MN$replicates),]
+```
+
+Two studies have missing replicates. The Kimura study did not report a number of replicates, since no measure of variability was given we will conservatively assume that only one replicate was used
+the Sakai study will be removed later for having too few observations.
+```{r}
+MN$replicates[MN$Author == 'Kimura et al'] = 1
+```
+
+Let's remove any studies with too few observations now
+```{r}
+MN = remove_few_obs_studies(MN)
+```
+
+
+##Check outcome units##
+```{r}
+table(MN$`Outcome unit (eg percentage of binucleated cells containing one or more micronuclei)`, useNA = 'ifany')
+```
+
+The outcomes can generally be divided into two classes, one for the standard MN assay and one for the CBMN assay, let's standardize the naming and convert promille measurements to percent measurements.
+
+```{r}
+MN = convert_outcome_units(MN)
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(MN$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+MN = convert_varest(MN)
+```
+
+Convert all responses to FC
+```{r}
+MN = convert_to_FC(MN)
+```
+
+Convert all concentrations to uM
+```{r}
+EMS_g_per_mol = 124.16 #Derived from: https://pubchem.ncbi.nlm.nih.gov/compound/6113
+MN = convert_concs(MN, EMS_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+MN = convert_CTassaytype(MN)
+```
+
+Standardize scoring techniques
+```{r}
+MN = convert_scoringTechnique(MN)
+```
+
+
+##Check for cytotoxicity
+
+
+See where (if at all) there is cytotoxicity data missing
+```{r}
+MN[,c(2:4)][is.na(MN$`Relative survival (%)`),]
+```
+
+The Bryce paper did not provide viability estimates per concentration but stated that for both studies performed, the relative survival at the highest concentration was above 50%, therefore all of its data points are kept. For the Stopper paper, no viability estimates are given but the dose range tested did not result in cytotox above 50% for the closest related study (Sanders, study index 7) with a fully overlapping dose-range. Therefore for this paper too, all observations are considered non cytotoxic.
+
+```{r}
+MN$ct[is.na(MN$ct)] = T
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(MN$ct) / nrow(MN)
+MN = MN[MN$ct == T,]
+```
+
+```{r}
+MN = remove_few_obs_studies(MN)
+```
+
+
+#Plotting the data
+
+
+
+Optimize variables for plotting and Variance decomposition
+```{r}
+#Add a column for S9 status
+MN$S9 = !(is.na(MN$`S9 source (eg. Rat liver)`))
+MN$S9 = factor(MN$S9, labels = c("no", "yes"))
+
+#Add a column for expression period in days
+MN$expression_period = (MN$`Time of harvest [h]` - MN$`Time of exposure [h]`) / 24
+
+#Ensure Cytochalasin B variable has two levels only
+MN$`Cytochalasin B present (yes / no)` = factor(tolower(MN$`Cytochalasin B present (yes / no)`))
+
+
+#Add a column to map scoring techniques to microscopy based, flow cytometry based or hybrid
+MN = MN %>%
+  mutate(
+    `Scoring technique` = case_when(
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("manual", "semiManualMicroscope", "Metafer", "cellAnalyzer6K") ~ "Microscopy",
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("flowCyto", "Coulter") ~ "Flow Cytometry",
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("imageStream") ~ "Hybrid"
+    ), `Assay type` = case_when(
+      `Cytochalasin B present (yes / no)` == 'yes' ~ 'CBMN',
+      `Cytochalasin B present (yes / no)` == 'no' ~ 'conventional'
+    )
+  )
+```
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(MN$Author))
+length(unique(MN$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+MN$distinct = rep(NA, nrow(MN))
+
+#Zhang 1995 paper
+MN$distinct[MN$DOI == '10.1016/0165-7992(95)00027-5' & MN$`Time of harvest [h]` == 28] = '28h harvest'
+MN$distinct[MN$DOI == '10.1016/0165-7992(95)00027-5' & MN$`Time of harvest [h]` == 52] = '52h harvest'
+MN$distinct[MN$DOI == '10.1016/0165-7992(95)00027-5' & MN$`Time of harvest [h]` == 76] = '76h harvest'
+
+#Sanders 2022 paper
+MN$distinct[MN$DOI == '10.1093/mutage/geac025' & MN$`Time of exposure [h]` == 3] = '3h exposure'
+MN$distinct[MN$DOI == '10.1093/mutage/geac025' & MN$`Time of exposure [h]` == 24] = '24h exposure'
+
+#Avlasevich 2021
+MN$distinct[MN$DOI == '10.1093/mutage/geab039' & is.na(MN$`S9 (%)`)] = '+S9'
+MN$distinct[MN$DOI == '10.1093/mutage/geab039' & !(is.na(MN$`S9 (%)`))] = '-S9'
+
+#Bryce 2010
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2010.08.020.' & MN$`Study index` == 11] = 'repeat 1'
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2010.08.020.' & MN$`Study index` == 12] = 'repeat 2'
+
+```
+
+
+```{r}
+doseres_plot(MN, 'all data', assay = 'MN_Assay')
+```
+
+We clearly see two studies standing out from the rest: The Sanders 3h exposure time study and the Stopper and Lutz paper, they differ from the rest of the studies by having a short exposure time and an early time of harvest
+
+Let's see how things look if we separate on short / long exposure only
+
+```{r}
+doseres_contrast(MN, 'Exposure times and S9', assay = 'MN_Assay', color_col = 'Time of exposure [h]', linetype_col = "Assay type", solid_level = 'conventional', shape_col = 'Scoring technique')
+doseres_contrast(MN, 'Expression period and S9', assay = 'MN_Assay', color_col = 'expression_period', linetype_col = 'S9', solid_level = 'no')
+```
+
+#Variance decomposition
+```{r}
+MNmod = MN
+names(MNmod) = make.names(names(MNmod))
+```
+
+Run imputation
+```{r}
+MNimp = mice(MNmod, m = 1, method = 'pmm', seed = 20260205)
+```
+
+
+```{r}
+MNimp2 = complete(MNimp, 1)[,c('Author', 'Study.index', 'FC', 'Concentration.EMS', 'Time.of.exposure..h.', 'expression_period', 'S9', 'Assay.type', 'Scoring.technique', 'Relative.survival....')]
+```
+
+```{r}
+any(is.na(MNimp2))
+
+MNimp2 = prepare_varcomp(MNimp2, MNmod)
+```
+
+```{r,message=F,warning=F}
+model_MN = lmer(
+  FClog ~ poly(Concentration.EMS, degree = 2) +
+       Time.of.exposure..h. +
+       expression_period +
+       S9 + 
+       Assay.type + 
+       Scoring.technique +
+       Relative.survival.... +
+       (1|Author/DOI/Study.index),
+  data = MNimp2
+)
+
+vc = as.data.frame(VarCorr(model_MN))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+
+MNVAR = partR2(model_MN, partvars = c("poly(Concentration.EMS, degree = 2)",
+                               "Time.of.exposure..h.",
+                               "expression_period",
+                               "S9",
+                               "Assay.type",
+                               "Scoring.technique",
+                               "Relative.survival...."
+                               ), R2_type = 'marginal'
+       )
+
+MNVAR$R2
+MNVAR$model = model_MN
+MNVAR$vc = vc
+```
+
+
+----------------
+Alkylation assay
+----------------
+
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+alkyl = as.data.frame(read_excel(
+  '../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx',
+  sheet = 'Alkylation assay'))
+
+#Perform general wrangling 
+alkyl = generalwrangle(alkyl)
+
+#Convert data classess
+alkyl = correctclass(alkyl)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(alkyl)
+```
+Looks good
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+alkyl[which(alkyl$`Outcome for the treatment` == 0),]
+```
+No subtraction of background or raw data that needs to be converted
+
+Check if every observation has its own unique control
+```{r}
+sum(alkyl$`Concentration EMS` == 0)
+length(unique(alkyl$`Study index`))
+```
+We have no control measurements at all for this assay which is not ideal, however, since we don't have any alternative data, we'll stick with the data we have.
+
+
+Check for missing replicates
+```{r}
+table(alkyl$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+Customary removal of studies with too few observations
+```{r}
+alkyl = remove_few_obs_studies(alkyl)
+```
+
+
+##Check outcome units##
+
+```{r}
+table(alkyl$`Outcome unit (eg mean fluorescence intensity)`, useNA = 'ifany')
+```
+All measurements are in desegregations per minute but since the amount of DNA per sample differed, we would need to convert the measurements to DPM per unit of of DNA for the studies to be comparable.
+
+
+Fraction of occurrence of each of the nucleotides in the TK6 genome
+```{r}
+#Distinguish the rows relating to individual sites / full DNA
+alkyl_individual_sites = alkyl[alkyl$`Amount of DNA unit (eg  μg)` == 'Number of guanine molecules',]
+alkyl_full_DNA = alkyl[alkyl$`Amount of DNA unit (eg  μg)` == 'μg',]
+
+#Define the fractions of nucleotides
+GC_frac = .409 #Derived from: doi:10.1186/s13104-019-4137-z
+G_frac = C_frac = GC_frac/2
+A_frac = T_frac = (1 - GC_frac) /2
+
+No_of_Guanine_molecules = No_of_Cytosine_molecules = alkyl_individual_sites$`Amount of DNA analyzed`
+No_of_Adenine_molecules = No_of_Thymidine_molecules = alkyl_individual_sites$`Amount of DNA analyzed` * (A_frac/G_frac)
+
+#Define the molar weights of the different deoxyribonucleotide monophosphates
+weight_A = 332.3
+weight_C = 307.2
+weight_G = 347.2
+weight_T = 322.2
+
+#Calculate DNA amounts in microgram
+DNA_amnt_atomic = No_of_Adenine_molecules * weight_A + No_of_Thymidine_molecules * weight_T +  No_of_Cytosine_molecules * weight_C + No_of_Guanine_molecules * weight_G
+DNA_amnt_ug = DNA_amnt_atomic * (1.66053907 * 10^(-18))
+
+#Merge the separated dataframes
+alkyl_individual_sites$`Amount of DNA analyzed` = DNA_amnt_ug
+alkyl = rbind(alkyl_individual_sites, alkyl_full_DNA)
+
+#Everything is now in the same unit
+alkyl$`Amount of DNA unit (eg  μg)` = rep('μg', nrow(alkyl))
+alkyl$dpm_per_ug = alkyl$`Outcome for the treatment` / alkyl$`Amount of DNA analyzed`
+
+#Adapt some of the namings
+colnames(alkyl)[colnames(alkyl) == 'Outcome for the treatment'] = 'DPM'
+colnames(alkyl)[colnames(alkyl) == 'dpm_per_ug'] = 'Outcome for the treatment'
+alkyl = alkyl[, !names(alkyl) %in% 'DPM']
+alkyl$`Outcome unit (eg mean fluorescence intensity)` = rep('dpm per ug of radioactively labeled ethyl groups', nrow(alkyl))
+```
+
+```{r}
+alkyl = ObsToMeans(alkyl, varOI = 'Alkylation site', ct = T, varextra = 'Amount of DNA analyzed')
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(alkyl$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+alkyl = convert_varest(alkyl)
+```
+
+
+Convert all concentrations to uM
+```{r}
+EMS_g_per_mol = 124.16
+alkyl = convert_concs(alkyl, EMS_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+alkyl = convert_CTassaytype(alkyl)
+```
+
+Scoring technique was not extracted, also not relevant given there is only one unique paper
+
+
+##Check for cytotoxicity
+
+```{r}
+table(alkyl$`Relative survival (%)`, useNA = 'ifany')
+```
+The entire concentration range seems cytotoxic if we were to keep to the 50% survival inclusion range, however in this instance we will keep all data because it is the only available alkylation data on either of our compounds.
+
+
+#Plotting the data
+
+```{r}
+doseres_contrast(alkyl, 'Alkylation sites', assay = 'Adduct_Assay', color_col = 'Alkylation site', response_col = 'Outcome for the treatment', sem_col = 'SEM', save = T, path = '../Figures/ConcRes_comparison/FigS1')
+```
+
+
+#Variance decomposition
+
+```{r}
+alkylmod = alkyl
+names(alkylmod) = make.names(names(alkylmod))
+```
+
+
+```{r}
+alkylmod = prepare_varcomp(alkylmod, out_col = "Outcome.for.the.treatment", sem_col = 'SEM', sd_col = 'SD')
+any(is.na(alkylmod))
+```
+
+```{r}
+model_alkyl = lmer(
+  Outcome.for.the.treatmentlog ~ poly(Concentration.EMS, degree = 2) +
+       Alkylation.site +
+       Relative.survival.... +
+    
+       (1|Study.index),
+  data = alkylmod
+)
+
+vc = as.data.frame(VarCorr(model_alkyl))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+alkylVAR = partR2(model_alkyl, partvars = c(
+                  "poly(Concentration.EMS, degree = 2)",
+                  "Alkylation.site",
+                  "Relative.survival...."
+                ))
+
+alkylVAR$R2
+alkylVAR$model = model_alkyl
+alkylVAR$vc = vc
+```
+
+
+
+-----------
+gh2ax assay
+-----------
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+gh2ax = as.data.frame(read_excel(
+  '../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx',
+  sheet = 'gH2AX assay'))
+
+#Perform general wrangling 
+gh2ax = generalwrangle(gh2ax)
+
+#Convert data classes
+gh2ax = correctclass(gh2ax)
+```
+
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(gh2ax)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+gh2ax[which(gh2ax$`Outcome for the treatment` == 0),]
+```
+
+We see no subtraction from background 
+
+
+Check if every observation has its own unique control
+```{r}
+sum(gh2ax$`Concentration EMS` == 0)
+length(unique(gh2ax$`Study index`))
+```
+We have more controls than study indexes, let's see if this is the case because we have raw datapoints
+
+```{r}
+any(gh2ax$replicates == 1)
+```
+Indeed, let's try to summarize the individual measurements
+
+```{r}
+gh2ax = ObsToMeans(gh2ax, varOI = 'Study index', ct = T, varextra = NA)
+```
+
+Let's check if we still have more controls than datapoints
+
+```{r}
+sum(gh2ax$`Concentration EMS` == 0)
+length(unique(gh2ax$`Study index`))
+```
+We can see that one of the six studies has a missing control.
+Normally I would remove the offending study for further analysis as a missing control does not allow for the calculation of FCs, howvever, since in this case the output is already reported in terms of FCs, I will keep the observation in.
+
+
+Check for missing replicates
+```{r}
+table(gh2ax$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+Let's remove any studies with too few observations now
+```{r}
+gh2ax = remove_few_obs_studies(gh2ax)
+```
+
+
+```{r}
+table(gh2ax$`Outcome unit (eg mean fluorescence intensity)`, useNA = 'ifany')
+```
+As expected, all outcomes are measured in the same fashion, no need for further conversions / standardization
+
+
+##Conversions
+
+
+Examine the different variability units that were used
+```{r}
+table(gh2ax$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Calculate SEMs
+```{r}
+gh2ax = convert_varest(gh2ax)
+```
+
+
+There is no need to convert / standardize concentrations, cytotoxicity naming and naming for the scoring techniques, because all concentrations are reported in µM and all cytotoxicity assessments as well as scorings were done using the same approach.
+
+Since outcomes are all reported as fold changes, there is also no need to recalculate FCs from the controls, I will rename the outcome and outcome variability columns to be consistent in naming however.
+```{r}
+gh2ax$FC = gh2ax$`Outcome for the treatment`
+gh2ax$FC_SEM = gh2ax$SEM
+gh2ax$FC_SD = gh2ax$SD
+```
+
+
+
+##Check for cytotoxicity
+
+```{r}
+sum(is.na(gh2ax$`Relative survival (%)`))
+```
+
+We have no missing cytotoxicity to deal with
+
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(gh2ax$ct) / nrow(gh2ax)
+gh2ax = gh2ax[gh2ax$ct == T,]
+```
+
+```{r}
+gh2ax = remove_few_obs_studies(gh2ax)
+```
+
+
+#Plotting the data
+
+```{r}
+gh2ax$S9 = !(is.na(gh2ax$`S9 source (eg. Rat liver)`))
+gh2ax$S9 = factor(gh2ax$S9, labels = c("no", "yes"))
+```
+
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(gh2ax$Author))
+length(unique(gh2ax$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+gh2ax$distinct = rep(NA, nrow(gh2ax))
+
+#Avlasevich 2021 paper
+gh2ax$distinct[gh2ax$DOI == '10.1093/mutage/geab039' & gh2ax$`Time of exposure [h]` == 24 & !(is.na(gh2ax$`S9 (%)`))] = '2021, 24h exposure +S9'
+gh2ax$distinct[gh2ax$DOI == '10.1093/mutage/geab039' & gh2ax$`Time of exposure [h]` == 24 & is.na(gh2ax$`S9 (%)`)] = '2021, 24h exposure'
+gh2ax$distinct[gh2ax$DOI == '10.1093/mutage/geab039' & gh2ax$`Time of exposure [h]` == 4 & is.na(gh2ax$`S9 (%)`)] = '2021, 4h exposure +S9'
+gh2ax$distinct[gh2ax$DOI == '10.1093/mutage/geab039' & gh2ax$`Time of exposure [h]` == 4 & !(is.na(gh2ax$`S9 (%)`))] = '2021, 4h exposure'
+
+#Avlasevich 2023 unpublished
+gh2ax$distinct[gh2ax$DOI == 'unpublished' & gh2ax$`Time of exposure [h]` == 24] = '2023, 24h exposure'
+gh2ax$distinct[gh2ax$DOI == 'unpublished' & gh2ax$`Time of exposure [h]` == 4] = '2023, 4h exposure'
+
+```
+
+```{r}
+#Simplify and standardize naming for scoring techniques
+gh2ax = gh2ax %>%
+  mutate(
+    `Scoring technique` = case_when(
+      `Type of measurement (eg Microscopic imaging or flow cytometry)` %in% 
+        c("manual", "Cell Analyzer 6000", "cellAnalyzer6K") ~ "Microscopy",
+      `Type of measurement (eg Microscopic imaging or flow cytometry)` %in% 
+        c("flowCyto", "Flow cytometry") ~ "Flow cytometry"
+    )
+  )
+```
+
+
+```{r}
+doseres_plot(gh2ax, 'all data', assay = 'γH2Ax_Assay')
+doseres_contrast(gh2ax, 'Exposure times and S9 status', assay = 'γH2Ax_Assay', color_col = 'Time of exposure [h]', linetype_col = 'S9', solid_level = 'no')
+```
+
+
+##Variance decomposition
+
+```{r}
+gh2axmod = gh2ax
+names(gh2axmod) = make.names(names(gh2axmod))
+```
+
+```{r}
+gh2axmod = prepare_varcomp(gh2axmod)
+
+gh2axmod2 = gh2axmod[,c("Author", "DOI", "Study.index", "FC", "FClog", "Concentration.EMS", "Time.of.exposure..h.", "S9", "Relative.survival....")]
+any(is.na(gh2axmod2))
+
+```
+
+
+```{r,message=F}
+model_gh2ax = lmer(
+  FClog ~ poly(Concentration.EMS, degree = 2) +
+       Time.of.exposure..h. +
+       S9 + 
+       Relative.survival.... +
+       (1|DOI/Study.index),
+  data = gh2axmod2
+)
+
+vc = as.data.frame(VarCorr(model_gh2ax))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+gh2axVAR = partR2(model_gh2ax, partvars = c(
+                  "poly(Concentration.EMS, degree = 2)",
+                  "Time.of.exposure..h.",
+                  "S9",
+                  "Relative.survival...."))
+
+gh2axVAR$R2
+gh2axVAR$model = model_gh2ax
+gh2axVAR$vc = vc
+```
+
+
+
+--------------
+Mutation assay
+--------------
+
+
+##General data wrangling##
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+muta = as.data.frame(read_excel(
+  '../rawData/202605271207_Data_from_literature_search_EMS_TK6.xlsx',
+  sheet = 'Forward gene mutation assay'))
+
+#Perform general wrangling 
+muta = generalwrangle(muta, ctthresh = 10)
+
+#Convert data classess
+muta = correctclass(muta)
+```
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(muta)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+muta[which(muta$`Outcome for the treatment` == 0),]
+```
+
+We see responses of 0 for the Amundson studies, after going back to the paper, we indeed find that subtraction of the background occurred, let's correct for that:
+
+```{r}
+background_HPRT = 5 #listed in description of figure 2 of the Amundson paper
+background_TK = 6 #listed in description of figure 2 of the Amundson paper
+
+muta$`Outcome for the treatment`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] = muta$`Outcome for the treatment`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] + background_HPRT
+muta$`Outcome variability lower estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] = muta$`Outcome variability lower estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] + background_HPRT
+muta$`Outcome variability upper estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] = muta$`Outcome variability upper estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'HPRT'] + background_HPRT
+
+muta$`Outcome for the treatment`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] = muta$`Outcome for the treatment`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] + background_TK
+muta$`Outcome variability lower estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] = muta$`Outcome variability lower estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] + background_TK
+muta$`Outcome variability upper estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] = muta$`Outcome variability upper estimate`[muta$Author == 'Amundson et al' & muta$`Gene locus` == 'TK'] + background_TK
+```
+
+
+Check if every observation has its own unique control
+```{r}
+sum(muta$`Concentration EMS` == 0)
+length(unique(muta$`Study index`))
+```
+Looks good
+
+
+Check for missing replicates
+```{r}
+table(muta$replicates, useNA = 'ifany')
+```
+Let's examine the studies for which we have missing replicates
+```{r}
+muta[,c(2:4)][is.na(muta$replicates),]
+```
+
+We have a number of studies with missing replicates and applied the following rules for imputation:
+- When the number of replicates is unknown and there is no measure of variablity in the data, we assume 1 replicate. 
+- When the number of replicates is unknown and there is a measure of variability in the data, we assume the standard in the field of 4 replicates.
+
+```{r}
+muta = muta %>%
+  group_by(`Study index`) %>%
+  mutate(
+    replicates = case_when(
+      !is.na(replicates) ~ replicates,
+      any(!is.na(`Outcome variability lower estimate`)) ~ 4,
+      TRUE ~ 1
+    )
+  ) %>%
+  ungroup()
+```
+
+
+The Amundson study contains data on cells that are not TK6 like (they have the opposite homolog of the TK as the active allele), they would therefore don't strictly adhere to our inclusion criteria and we'll remove them for furhter analysis
+```{r}
+TK6_reverse_revertants = which(muta$Author == 'Amundson et al' & muta$Comments != 'configuration (R7, R9, HR18) / density : 8-10x10^5 cells/ml, true no of replicates is unknown but between 3 and 6')
+muta = muta[-TK6_reverse_revertants,]
+```
+
+
+Let's remove any studies with too few observations now
+```{r}
+muta = remove_few_obs_studies(muta)
+```
+
+
+##Check outcome units##
+```{r}
+table(muta$`Outcome unit (eg Mutation frequency in percentage)`, useNA = 'ifany')
+```
+
+Let's convert all outcomes to mutations per million.
+```{r}
+muta = convert_muta_to_perm(muta)
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(muta$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+We will assume that the error bars in the Kruger paper are SEMs as that seems to be the most often used variability measure in these studies
+```{r}
+muta$`Outcome variability unit (eg std deviation)`[muta$`Outcome variability unit (eg std deviation)` == 'Not clear, looks symmetrical, so could be std deviation'] = 'SEM' 
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+muta = convert_varest(muta)
+```
+
+Convert all responses to FC
+```{r}
+muta = convert_to_FC(muta)
+```
+
+Convert all concentrations to uM
+```{r}
+EMS_g_per_mol = 124.16
+muta = convert_concs(muta, EMS_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+muta = convert_CTassaytype(muta)
+```
+
+Standardize scoring techniques
+```{r}
+muta = convert_scoringTechnique(muta)
+```
+
+Standardize locus naming
+```{r}
+muta = convert_locus_naming(muta)
+```
+
+
+##Check for cytotoxicity
+
+```{r}
+table(muta$`Relative survival (%)`, useNA = 'ifany')
+```
+
+See where there is cytotoxicity data missing
+```{r}
+unique(muta[,c(2:4)][is.na(muta$`Relative survival (%)`),])
+```
+
+
+There is a lot of cytotoxicity reported for these studies
+Upon inspection of the dataset and the papers, it becomes appearant that the NAs for the high concentrations in the 24 h studies of the Penman paper imply very high cytotoxicity, therefore we will set the survival to 0 for these observations.
+
+```{r}
+muta$`Relative survival (%)`[muta$Author == 'Penman et al' & muta$`Time of exposure [h]` == 24 & is.na(muta$`Relative survival (%)`)] = 0
+```
+ 
+No cytotox data is available for the Penman studies that were performed after 0 or 120+ hours of exposure, however, for all of these studies, the concentration range is very low compared to other papers. Although the time of exposure for some of these studies is much larger compared to what is found in most other papers, we may assume no cytotoxicity due to it's very low dose ranges.
+
+For the Liber HPRT study the closest relating studies are the Waters and O'Brien studies. These two papers indicate that the threshold concentration for approximately 50% cytotox is around 200 uM. Since the dose range in the Liber study only goes up to 165 uM, we may assume no considerable cytotox.
+
+For the Amundson paper, the most similar paper is the O'Brien paper, where 200 uM is the last dose that does not yield cytotox above 50%. Therefore, for the Amundson paper, only the highest concentration of 300 uM is considered cytotoxic
+
+```{r}
+muta$ct = muta$`Relative survival (%)` >= 20 | is.na(muta$`Relative survival (%)` >= 20)
+muta$ct[muta$Author == 'Amundson et al' & muta$`Concentration EMS` == 300] = F
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(muta$ct) / nrow(muta)
+muta = muta[muta$ct == T,]
+```
+
+```{r}
+muta = remove_few_obs_studies(muta)
+```
+
+
+#Plotting the data
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(muta$Author))
+length(unique(muta$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+muta$distinct = rep(NA, nrow(muta))
+
+#Penman 1983 paper
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 24] = 'TK locus, 24h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 24] = 'HPRT locus, 24h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 0] = 'TK locus, 0h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 120] = 'TK locus, 120h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 240] = 'TK locus, 240h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 360] = 'TK locus, 360h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'TK' & muta$`Time of exposure [h]` == 480] = 'TK locus, 480h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 0] = 'HPRT locus, 0h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 120] = 'HPRT locus, 120h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 240] = 'HPRT locus, 240h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 360] = 'HPRT locus, 360h exposure'
+muta$distinct[muta$DOI == '10.1016/0027-5107(83)90137-9' & muta$`Gene locus` == 'HPRT' & muta$`Time of exposure [h]` == 480] = 'HPRT locus, 480h exposure'
+
+#O'Brien 1990 paper
+muta$distinct[muta$DOI == 'PMID: 2184322' & muta$`Gene locus` == 'TK' & muta$`Expression period[days]` == 2] = 'TK locus, 2d expression'
+muta$distinct[muta$DOI == 'PMID: 2184322' & muta$`Gene locus` == 'TK' & muta$`Expression period[days]` == 4] = 'TK locus, 4d expression'
+muta$distinct[muta$DOI == 'PMID: 2184322' & muta$`Gene locus` == 'HPRT' & muta$`Expression period[days]` == 4] = 'HPRT locus, 4d expression'
+muta$distinct[muta$DOI == 'PMID: 2184322' & muta$`Gene locus` == 'HPRT' & muta$`Expression period[days]` == 7] = 'HPRT locus, 7d expression'
+
+#Kruger 2014 paper
+muta$distinct[muta$DOI == '10.1007/s00204-014-1413-5' & muta$`Time of exposure [h]` == 4] = '4h exposure'
+muta$distinct[muta$DOI == '10.1007/s00204-014-1413-5' & muta$`Time of exposure [h]` == 24] = '24h exposure'
+
+#Waters 1990 paper
+muta$distinct[muta$DOI == '10.1093/mutage/5.Supplement.61' & muta$`Gene locus` == 'TK'] = 'TK locus'
+muta$distinct[muta$DOI == '10.1093/mutage/5.Supplement.61' & muta$`Gene locus` == 'HPRT'] = 'HPRT locus'
+
+#Liber 1986 paper
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90062-x' & muta$`Gene locus` == 'HPRT'] = 'HPRT locus'
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90062-x' & muta$`Gene locus` == 'NAKATPase'] = 'NAKATPase locus'
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90062-x' & muta$`Gene locus` == 'TUB'] = 'TUB locus'
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90062-x' & muta$`Gene locus` == 'RNAsyn'] = 'RNAsyn locus'
+
+#Amundson 1991 paper
+muta$distinct[muta$DOI == '10.1016/0027-5107(91)90029-n' & muta$`Expression period[days]` == 3] = '3d expression'
+muta$distinct[muta$DOI == '10.1016/0027-5107(91)90029-n' & muta$`Expression period[days]` == 6] = '6d expression'
+
+#Rees 2016 paper
+muta$distinct[muta$DOI == '10.1093/mutage/gew059' & muta$`Expression period[days]` == 1] = '1d expression'
+muta$distinct[muta$DOI == '10.1093/mutage/gew059' & muta$`Expression period[days]` == 2] = '2d expression'
+muta$distinct[muta$DOI == '10.1093/mutage/gew059' & muta$`Expression period[days]` == 3] = '3d expression'
+muta$distinct[muta$DOI == '10.1093/mutage/gew059' & muta$`Expression period[days]` == 4] = '4d expression'
+```
+
+```{r}
+doseres_plot(muta, 'all data', assay = 'mutation_Assay', width = 12)
+doseres_contrast(muta, 'Exposure times and gene locus', assay = 'mutation_Assay', color_col = "Time of exposure [h]", shape_col = 'Gene locus')
+doseres_contrast(muta, 'Expression period and gene locus', assay = 'mutation_Assay', color_col = "Expression period[days]", shape_col = 'Gene locus')
+
+```
+
+
+#Variance decomposition
+
+```{r}
+mutamod = muta
+names(mutamod) = make.names(names(mutamod)) 
+
+
+vars_for_mice = c("Relative.survival....", "Concentration.EMS", "Time.of.exposure..h.",
+                   "Expression.period.days.", "FC", "FC_SEM", "replicates")
+
+
+imp = mice(mutamod[, vars_for_mice], method = "pmm", m = 1, seed = 123)
+mutamod_imp = complete(imp)
+
+
+mutamod$Relative.survival.... = mutamod_imp$Relative.survival....
+
+mutamod_imp = prepare_varcomp(mutamod_imp, mutamod)
+
+mutamod_imp = mutamod_imp[,c("Study.index", "DOI", "Author", "Gene.locus", "Time.of.exposure..h.", "Expression.period.days.", "Concentration.EMS", "Relative.survival....", "Outcome.for.the.treatment", "FC", "FClog", "ct")]
+
+any(is.na(mutamod_imp))
+```
+
+```{r,message=F,warning=F}
+model_muta = lmer(
+  FClog ~ poly(Concentration.EMS, degree = 2) +
+       Gene.locus +
+       Time.of.exposure..h. +
+       Expression.period.days. +
+       Relative.survival.... +
+       (1|Author/DOI/Study.index),
+  data = mutamod_imp
+)
+
+vc = as.data.frame(VarCorr(model_muta))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+mutaVAR = partR2(model_muta, partvars = c("poly(Concentration.EMS, degree = 2)",
+                               "Gene.locus",
+                               "Time.of.exposure..h.",
+                               "Expression.period.days.",
+                               "Relative.survival...."
+                               ), R2_type = 'marginal')
+
+mutaVAR$R2
+mutaVAR$model = model_muta
+mutaVAR$vc = vc
+```
+
+
+```{r}
+mutaTK = muta[muta$`Gene locus` == 'TK',]
+mutaHPRT = muta[muta$`Gene locus` == 'HPRT',]
+
+mutaTK_s = mutaTK[mutaTK$`Time of exposure [h]` <= 4,]
+mutaHPRT_s = mutaHPRT[mutaHPRT$`Time of exposure [h]` <= 4,]
+mutaTK_l = mutaTK[mutaTK$`Time of exposure [h]` > 4,]
+mutaHPRT_l = mutaHPRT[mutaHPRT$`Time of exposure [h]` > 4,]
+
+mutaTK_le = mutaTK[mutaTK$`Expression period[days]` >= 6,]
+mutaHPRT_le = mutaHPRT[mutaHPRT$`Expression period[days]` >= 6,]
+mutaTK_se = mutaTK[mutaTK$`Expression period[days]` < 6,]
+mutaHPRT_se = mutaHPRT[mutaHPRT$`Expression period[days]` < 6,]
+```
+
+Let's plot the different loci separately
+```{r}
+doseres_plot(mutaTK, 'TK locus', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaHPRT, 'HPRT locus', assay = 'mutation_Assay', width = 12)
+
+doseres_plot(mutaTK_s, 'TK locus short exposure', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaHPRT_s, 'HPRT locus short exposure', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaTK_l, 'TK locus long exposure', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaHPRT_l, 'HPRT locus long exposure', assay = 'mutation_Assay', width = 12)
+
+doseres_plot(mutaTK_se, 'TK locus short expression period', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaHPRT_se, 'HPRT locus short expression period', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaTK_le, 'TK locus long expression period', assay = 'mutation_Assay', width = 12)
+doseres_plot(mutaHPRT_le, 'HPRT locus long expression period', assay = 'mutation_Assay', width = 12)
+```
+
+Exposure time seems to separate the data better than expression period
+
+
+-------------
+Store results
+-------------
+
+#Variance component results
+```{r}
+EMS_VarComp = mget(c("cometVAR", "MNVAR", "alkylVAR", "gh2axVAR", "mutaVAR"))
+saveRDS(EMS_VarComp, file = '../processedData/EMS_VarComp.rds')
+```
+
+#Wrangled dataframes
+```{r}
+EMSdata = mget(c("cometall", "MN", "alkyl", "gh2ax", "muta"))
+saveRDS(EMSdata, file = '../processedData/EMSdata.rds')
+```
+
+
+
+

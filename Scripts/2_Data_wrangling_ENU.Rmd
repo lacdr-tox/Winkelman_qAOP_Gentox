@@ -1,0 +1,1280 @@
+---
+title: "Untitled"
+author: "Levi Winkelman"
+date: "2026-01-26"
+output: html_document
+---
+
+This document contains the code used for harmonizing and visualizing the raw ENU concentration-response data extracted from literature as described in 'Advancing AOPs for genotoxicity through quantifying KERs linking DNA alkylation to increase in mutations and chromosome aberrations' by Winkelman et al., 2026.
+
+```{r,warning=F, message=F}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(tibble)
+library(clinPK)
+library(ggplot2)
+library(mice)
+library(lme4)
+library(splines)
+library(lmerTest)
+library(partR2)
+library(stats)
+source('Functions_data_wrangling.R')
+```
+
+
+-----------
+Comet assay
+-----------
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+comet = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'Comet assay'))
+
+#Perform general wrangling 
+comet = generalwrangle(comet, conc_col = "Concentration ENU")
+
+#Convert data classess
+comet = correctclass(comet)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(comet)
+```
+Looks good
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+which(comet$`Outcome for the treatment` == 0)
+```
+Subtraction from background did not occur.
+
+Check if every observation has its own unique control
+```{r}
+sum(comet$`Concentration ENU` == 0)
+length(unique(comet$`Study index`))
+```
+Looks good
+
+
+Check for missing replicates
+```{r}
+table(comet$replicates, useNA = 'ifany')
+```
+
+We have no missing replicates
+
+Let's remove any studies with too few observations now
+```{r}
+comet = remove_few_obs_studies(comet)
+```
+
+
+##Check outcome units##
+
+```{r}
+table(comet$`Outcome unit (eg % of DNA in tail)`, useNA = 'ifany')
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(comet$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+comet = convert_varest(comet)
+```
+
+Convert all responses to FC
+```{r}
+comet = convert_to_FC(comet, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+table(comet$`Concentration unit (eg μg/ml or μM)`, useNA = 'ifany')
+```
+
+```{r}
+ENU_g_per_mol = 117.11 #Derived from: https://pubchem.ncbi.nlm.nih.gov/compound/Ethylnitrosourea
+comet = convert_concs(comet, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+comet = convert_CTassaytype(comet)
+```
+
+Standardize scoring techniques
+```{r}
+comet = convert_scoringTechnique(comet)
+```
+
+
+
+##Check for cytotoxicity
+
+We don't have any survival percentage for individual datapoints but survival percentages over the line were stated to be >70%
+
+```{r}
+comet$ct = T
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(comet$ct) / nrow(comet)
+comet = comet[comet$ct == T,]
+```
+
+```{r}
+comet = remove_few_obs_studies(comet)
+```
+
+
+##Plot data##
+
+Add extra column for scoring automation
+```{r}
+#Add a column to map scoring techniques to automated, semi-automated or manual
+comet = comet %>%
+  mutate(
+    `Scoring automation` = case_when(
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("manual") ~ "Manual",
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("CA4", "Semi-automated (Comet IV)") ~ "Semi-automated",
+      `Technique for scoring (eg manual / automated)` %in% 
+        c("Automated (IMSTAR)", "clrmorph", "CeligoS", "Komet6" ) ~ "Automated"
+    )
+  )
+```
+
+
+Define distinctive features of studies from the same paper
+```{r}
+comet$distinct = rep(NA, nrow(comet))
+
+#Henderson 1998 paper
+comet$distinct[comet$DOI == '10.1093/mutage/13.1.89' & comet$`Study index` == 1] = 'repeat 1'
+comet$distinct[comet$DOI == '10.1093/mutage/13.1.89' & comet$`Study index` == 2] = 'repeat 2'
+
+```
+
+
+```{r}
+doseres_plot(comet, 'all data', assay = 'Comet_Assay', conc_col = 'Concentration ENU')
+doseres_contrast(comet, 'Exposure times and enzyme modification', assay = 'Comet_Assay', color_col = 'Time of exposure [h]', shape_col = 'Outcome unit (eg % of DNA in tail)', conc_col = 'Concentration ENU')
+```
+
+
+
+#Variance decomposition
+
+```{r}
+cometmod = comet
+names(cometmod) = make.names(names(cometmod))
+
+cometimp = mice(cometmod, m = 1, method = 'pmm', seed = 20260205)
+cometimp = complete(cometimp, 1)
+cometimp = prepare_varcomp(cometimp, cometmod)
+
+
+cometimp2 = cometimp[,c('Author', 'Study.index', 'DOI', 'FC', 'FClog', 'Concentration.ENU', 'Time.of.exposure..h.', 'Outcome.unit..eg...of.DNA.in.tail.', 'Scoring.automation')]
+```
+
+```{r}
+any(is.na(cometimp2))
+```
+
+```{r,message=F,warning=F}
+model_comet = lmer(
+  FClog ~ poly(Concentration.ENU, degree = 2) +
+       Time.of.exposure..h. +
+       Outcome.unit..eg...of.DNA.in.tail. +
+       Scoring.automation +
+       (1|Author/DOI/Study.index),
+  data = cometimp2
+)
+
+vc = as.data.frame(VarCorr(model_comet))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+cometVAR = partR2(model_comet, partvars = c("poly(Concentration.ENU, degree = 2)",
+                               "Time.of.exposure..h.",
+                               "Outcome.unit..eg...of.DNA.in.tail.",
+                               "Scoring.automation"))
+cometVAR$R2
+cometVAR$model = model_comet
+cometVAR$vc = vc
+```
+
+
+
+------------------
+Micronucleus assay
+------------------
+
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r,message=F}
+#Read in the data
+MN = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'Micronucleus assay'))
+
+#Perform general wrangling 
+MN = generalwrangle(MN, conc_col = "Concentration ENU")
+
+#Convert data classess
+MN = correctclass(MN)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(MN)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+MN[which(MN$`Outcome for the treatment` == 0),]
+```
+
+We see no subtraction from background
+
+
+Check if every observation has its own unique control
+```{r}
+sum(MN$`Concentration ENU` == 0)
+length(unique(MN$`Study index`))
+```
+We have more controls than study indexes, let's see if this is the case because we have raw datapoints
+
+```{r}
+any(MN$replicates == 1)
+```
+Indeed, let's try to summarize the individual measurements
+
+```{r}
+MN = ObsToMeans(MN, varOI = 'Study index', ct = T, varextra = NA)
+```
+
+Let's check if we still have more controls than datapoints
+```{r}
+sum(MN$`Concentration ENU` == 0)
+length(unique(MN$`Study index`))
+```
+Looks good
+
+
+Check for missing replicates
+```{r}
+table(MN$replicates, useNA = 'ifany')
+```
+Looks good
+
+
+Let's remove any studies with too few observations now
+```{r}
+MN = remove_few_obs_studies(MN)
+```
+
+
+##Check outcome units##
+
+```{r}
+table(MN$`Outcome unit (eg percentage of binucleated cells containing one or more micronuclei)`, useNA = 'ifany')
+```
+The outcomes can generally be divided into two classes, one for the standard MN assay and one for the CBMN assay, let's standardize the naming and convert promille measurements to percent measurements.
+Note that the Bryce study reports Fold changes rather than percentages
+
+```{r}
+MN = convert_outcome_units(MN)
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(MN$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+MN = convert_varest(MN)
+```
+
+Convert all responses to FC
+```{r}
+MN = convert_to_FC(MN, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+MN = convert_concs(MN, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+MN = convert_CTassaytype(MN)
+```
+
+Standardize scoring techniques
+```{r}
+MN = convert_scoringTechnique(MN)
+```
+
+
+##Check for cytotoxicity
+
+```{r}
+unique(MN[,c(1:4)][is.na(MN$`Relative survival (%)`),])
+```
+
+We have a number studies with missing cytotoxicity measurements,
+- The Bryce 2010 studies did not assess cytotox on a case to case basis but reported a viability of over 51% for all concentrations
+- Similarly for the Chapman 2014 study, a viability of over 70% has been reported for all concentrations
+We will therefore keep all observations in
+
+```{r}
+MN$ct[is.na(MN$ct)] = T
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(MN$ct) / nrow(MN)
+MN = MN[MN$ct == T,]
+```
+
+```{r}
+MN = remove_few_obs_studies(MN)
+```
+
+
+#Plotting the data
+
+Optimize variables for plotting and Variance decomposition
+```{r}
+#Ensure Cytochalasin B variable has two levels only
+MN$`Cytochalasin B present (yes / no)` = factor(tolower(MN$`Cytochalasin B present (yes / no)`))
+```
+
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(MN$Author))
+length(unique(MN$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+MN$distinct = rep(NA, nrow(MN))
+
+#Bryce 2010
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2010.08.020' & MN$`Study index` == 1] = 'repeat 1'
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2010.08.020' & MN$`Study index` == 2] = 'repeat 2'
+
+#Cho 2023
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2023.503649' & MN$`Study index` == 3] = 'conducted by HC'
+MN$distinct[MN$DOI == '10.1016/j.mrgentox.2023.503649' & MN$`Study index` == 4] = 'conducted by Inotiv-RTP'
+```
+
+
+```{r}
+MNplot = MN
+names(MNplot)[names(MNplot) == 'Technique for scoring micronuclei (eg manual or automated)'] = 'Scoring technique'
+MNplot = MNplot %>%
+  mutate(
+    `Scoring technique` = recode(
+      `Scoring technique`,
+      'cellAnalyzer6K' = 'Cell Analyzer 6000',
+      'flowCyto' = 'Flow Cytometry'
+    )
+  )
+
+#Add a column for expression period in days
+MN$expression_period = (MN$`Time of harvest [h]` - MN$`Time of exposure [h]`) / 24
+
+#Add a column to map scoring techniques to microscopy based, flow cytometry based or hybrid
+MN = MN %>%
+  mutate(
+    `Scoring technique` = case_when(
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("manual", "semiManualMicroscope", "Metafer", "cellAnalyzer6K") ~ "Microscopy",
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("flowCyto", "Coulter") ~ "Flow Cytometry",
+      `Technique for scoring micronuclei (eg manual or automated)` %in% 
+        c("imageStream") ~ "Hybrid"
+    ), `Assay type` = case_when(
+      `Cytochalasin B present (yes / no)` == 'yes' ~ 'CBMN',
+      `Cytochalasin B present (yes / no)` == 'no' ~ 'conventional'
+    )
+  )
+
+```
+
+
+```{r}
+doseres_plot(MN, 'all data', assay = 'MN_Assay', conc_col = 'Concentration ENU')
+doseres_contrast(MN, 'Exposure times', assay = 'MN_Assay', color_col = "Time of exposure [h]", conc_col = 'Concentration ENU', shape_col = "Scoring technique", linetype_col = "Assay type", solid_level = 'conventional')
+```
+
+##Variance decomposition
+
+```{r}
+MNmod = MN
+names(MNmod) = make.names(names(MN))
+
+MNimp = mice(MNmod, m = 1, method = 'pmm', seed = 20260205)
+MNimp = complete(MNimp, 1)
+
+MNimp2 = prepare_varcomp(MNimp, MNmod)
+MNimp2 = MNimp2[,c('Author', 'Study.index', 'DOI', 'FC', 'FClog', 'Concentration.ENU', 'Time.of.exposure..h.', 'expression_period', 'Assay.type', 'Scoring.technique', 'Relative.survival....')]
+
+any(is.na(MNimp2))
+```
+
+```{r,message=F,warning=F}
+model_MN = lmer(
+  FClog ~ poly(Concentration.ENU, degree = 2) +
+       Time.of.exposure..h. +
+       expression_period +
+       Scoring.technique +
+       Relative.survival.... +
+       (1|Author/DOI/Study.index),
+  data = MNimp2
+)
+
+vc = as.data.frame(VarCorr(model_MN))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+MNVAR = partR2(model_MN, partvars = c("poly(Concentration.ENU, degree = 2)",
+                               "Time.of.exposure..h.",
+                               "expression_period",
+                               "Scoring.technique",
+                               "Relative.survival...."
+                               ), R2_type = 'marginal'
+       )
+
+MNVAR$R2
+MNVAR$model = model_MN
+MNVAR$vc = vc
+```
+
+
+
+-----------
+gh2ax assay
+-----------
+
+
+##General data wrangling##
+
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+gh2ax = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'gH2AX assay'))
+
+#Perform general wrangling 
+gh2ax = generalwrangle(gh2ax, conc_col = 'Concentration ENU')
+
+#Convert data classess
+gh2ax = correctclass(gh2ax)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(gh2ax)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+gh2ax[which(gh2ax$`Outcome for the treatment` == 0),]
+```
+
+We see no subtraction from background 
+
+
+Check if every observation has its own unique control
+```{r}
+sum(gh2ax$`Concentration ENU` == 0)
+length(unique(gh2ax$`Study index`))
+```
+We have more controls than study indexes, let's see if this is the case because we have raw datapoints
+
+```{r}
+any(gh2ax$replicates == 1)
+```
+
+Indeed, let's try to summarize the individual measurements
+
+```{r}
+gh2ax = ObsToMeans(gh2ax, varOI = 'Study index', ct = T, varextra = NA)
+```
+
+Let's check if we still have more controls than datapoints
+
+```{r}
+sum(gh2ax$`Concentration ENU` == 0)
+length(unique(gh2ax$`Study index`))
+```
+Looks good
+
+Check for missing replicates
+```{r}
+table(gh2ax$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+Let's remove any studies with too few observations now
+```{r}
+gh2ax = remove_few_obs_studies(gh2ax)
+```
+
+
+##Check outcome units
+
+```{r}
+table(gh2ax$`Outcome unit (eg mean fluorescence intensity)`, useNA = 'ifany')
+```
+
+let's recode so that the same outcomes are grouped together:
+
+```{r}
+gh2ax <- gh2ax %>%
+  mutate(`Outcome unit (eg mean fluorescence intensity)` =
+    case_when(
+      `Outcome unit (eg mean fluorescence intensity)` %in% c(
+        "Multiflow",
+        "mean fluorescenec intesity/cell",
+        "Fold change in median fluorescence intensity"
+      ) ~ "MFI",
+      
+      TRUE ~ `Outcome unit (eg mean fluorescence intensity)`
+    )
+  )
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(gh2ax$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Calculate SEMs
+```{r}
+gh2ax = convert_varest(gh2ax)
+```
+
+
+Convert all responses to FC
+```{r}
+gh2ax = convert_to_FC(gh2ax, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+gh2ax = convert_concs(gh2ax, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+gh2ax = convert_CTassaytype(gh2ax)
+```
+
+Standardize scoring techniques
+```{r}
+gh2ax = convert_scoringTechnique(gh2ax)
+```
+
+
+##Check for cytotoxicity
+
+```{r}
+unique(gh2ax[,c(2:4)][is.na(gh2ax$`Relative survival (%)`),])
+```
+We have no missing cytotox data so all observations will be marked as non cytotoxic
+
+```{r}
+gh2ax$ct = T
+```
+
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(gh2ax$ct) / nrow(gh2ax)
+gh2ax = gh2ax[gh2ax$ct == T,]
+```
+
+```{r}
+gh2ax = remove_few_obs_studies(gh2ax)
+```
+
+
+#Plotting the data
+
+Let's check for Authors that performed multiple experiments
+```{r}
+length(unique(gh2ax$Author))
+length(unique(gh2ax$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+gh2ax$distinct = rep(NA, nrow(gh2ax))
+
+#Avlasevich 2024 work
+gh2ax$distinct[gh2ax$DOI == 'unpublished' & gh2ax$`Time of exposure [h]` == 4] = '2024, 4h exposure'
+gh2ax$distinct[gh2ax$DOI == 'unpublished' & gh2ax$`Time of exposure [h]` == 4] = '2024, 24h exposure'
+
+```
+
+```{r}
+#Simplify and standardize naming for scoring techniques
+gh2ax = gh2ax %>%
+  mutate(
+    `Scoring technique` = case_when(
+      `Type of measurement (eg Microscopic imaging or flow cytometry)` %in% 
+        c("manual", "Cell Analyzer 6000", "cellAnalyzer6K") ~ "Microscopy",
+      `Type of measurement (eg Microscopic imaging or flow cytometry)` %in% 
+        c("flowCyto", "Flow cytometry") ~ "Flow cytometry"
+    )
+  )
+```
+
+
+```{r}
+doseres_plot(gh2ax, 'all data', assay = 'γH2Ax_Assay', conc_col = 'Concentration ENU')
+doseres_contrast(gh2ax, 'Exposure times and scoring technique', assay = 'γH2Ax_Assay', color_col = 'Time of exposure [h]', linetype_col = 'Scoring technique', solid_level = 'Flow Cytometry', conc_col = 'Concentration ENU')
+```
+
+
+##Variance decomposition
+
+```{r}
+gh2axmod = gh2ax
+names(gh2axmod) = make.names(names(gh2axmod))
+
+gh2axmod2 = prepare_varcomp(gh2axmod)
+gh2axmod2 = gh2axmod2[,c('Study.index', 'Author', 'DOI', 'FC', 'FClog', 'Concentration.ENU', 'Time.of.exposure..h.', 'Relative.survival....', 'Scoring.technique')]
+
+
+any(is.na(gh2axmod2))
+```
+
+
+```{r,message=F,warning=F}
+model_gh2ax = lmer(
+  FClog ~ poly(Concentration.ENU, degree = 2) +
+       Time.of.exposure..h. +
+       Relative.survival.... +
+       Scoring.technique +
+       (1|Author/DOI/Study.index),
+  data = gh2axmod2
+)
+
+vc = as.data.frame(VarCorr(model_gh2ax))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+gh2axVAR = partR2(model_gh2ax, partvars = c(
+                  "poly(Concentration.ENU, degree = 2)",
+                  "Time.of.exposure..h.",
+                  "Relative.survival....",
+                  "Scoring.technique"
+                ))
+
+gh2axVAR$R2
+gh2axVAR$model = model_gh2ax
+gh2axVAR$vc = vc
+```
+
+
+--------------
+Mutation assay
+--------------
+
+##General data wrangling##
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+muta = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'Forward gene mutation assay'))
+
+#Perform general wrangling 
+muta = generalwrangle(muta, conc_col = 'Concentration ENU', ctthresh = 10)
+
+#Convert data classess
+muta = correctclass(muta)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(muta)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+muta[which(muta$`Outcome for the treatment` == 0),]
+```
+We see no subtraction from background
+
+
+Check if every observation has its own unique control
+```{r}
+sum(muta$`Concentration ENU` == 0)
+length(unique(muta$`Study index`))
+```
+Looks good
+
+
+Check for missing replicates
+```{r}
+table(muta$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+
+Let's remove any studies with too few observations now
+```{r}
+muta = remove_few_obs_studies(muta)
+```
+
+
+##Check outcome units##
+```{r}
+table(muta$`Outcome unit (eg Mutation frequency in percentage)`, useNA = 'ifany')
+```
+
+Standardize the outcome
+```{r}
+muta = convert_muta_to_perm(muta)
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(muta$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+muta = convert_varest(muta)
+```
+
+Convert all responses to FC
+```{r}
+muta = convert_to_FC(muta, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+muta = convert_concs(muta, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+muta = convert_CTassaytype(muta)
+```
+
+Standardize locus naming
+```{r}
+muta = convert_locus_naming(muta)
+```
+
+
+##Check for cytotoxicity
+
+```{r}
+table(muta$`Relative survival (%)`, useNA = 'ifany')
+```
+
+See where there is cytotoxicity data missing
+```{r}
+muta[,c(2:4)][is.na(muta$`Relative survival (%)`),]
+```
+
+
+The only missing datapoint for relative survival is the 100 uM concentration, since the reported survival is still reported to be ~50 for a higher concentration, we will mark this observation as non cytotoxic
+
+```{r}
+muta$ct = muta$`Relative survival (%)` >= 20 | is.na(muta$`Relative survival (%)`)
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(muta$ct) / nrow(muta)
+muta = muta[muta$ct == T,]
+```
+
+```{r}
+muta = remove_few_obs_studies(muta)
+```
+ 
+
+#Plotting the data
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(muta$Author))
+length(unique(muta$`Study index`))
+```
+Define distinctive features of studies from the same paper
+```{r}
+muta$distinct = rep(NA, nrow(muta))
+
+#Jensen 1986 paper
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90033-3' & muta$`Gene locus` == 'TK'] = 'TK locus'
+muta$distinct[muta$DOI == '10.1016/0027-5107(86)90033-3' & muta$`Gene locus` == 'HPRT'] = 'HPRT locus'
+
+```
+
+
+```{r}
+doseres_plot(muta, 'all data', assay = 'mutation_Assay', conc_col = 'Concentration ENU')
+```
+
+This all looks nice and comparable
+
+#Variance decomposition
+
+```{r}
+mutamod = muta
+names(mutamod) = make.names(names(mutamod))
+
+mutamod = prepare_varcomp(mutamod)
+
+mutamod = mutamod[,c("Study.index", "Author", "DOI", "Gene.locus", "Concentration.ENU", "Relative.survival....", "FC", "FClog")]
+```
+
+No imputation is needed because we have no missing data for any of the columns of interest
+
+```{r,message=F,warning=F}
+model_muta = lmer(
+  FClog ~ poly(Concentration.ENU, degree = 2) +
+       Gene.locus +
+       Relative.survival.... +
+       (1|Study.index),
+  data = mutamod
+)
+
+vc = as.data.frame(VarCorr(model_muta))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+mutaVAR = partR2(model_muta, partvars = c("poly(Concentration.ENU, degree = 2)",
+                               "Gene.locus",
+                               "Relative.survival...."
+                               ), R2_type = 'marginal')
+
+mutaVAR$R2
+mutaVAR$model = model_muta
+mutaVAR$vc = vc
+```
+
+
+---------------------------
+Chromosome aberration assay
+---------------------------
+
+
+##General data wrangling##
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+CAA = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'Chromosome aberration assay'))
+
+#Perform general wrangling 
+CAA = generalwrangle(CAA, conc_col = 'Concentration ENU')
+
+#Convert data classess
+CAA = correctclass(CAA)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(CAA)
+```
+Looks good
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+CAA[which(CAA$`Outcome for the treatment` == 0),]
+```
+Looks good
+
+Check if every observation has its own unique control
+```{r}
+sum(CAA$`Concentration ENU` == 0)
+length(unique(CAA$`Study index`))
+```
+The Greenwood studies don't have a control and will be removed in a later step for having too few observations
+
+
+Check for missing replicates
+```{r}
+table(CAA$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+Let's remove any studies with too few observations now
+```{r}
+CAA = remove_few_obs_studies(CAA)
+```
+
+
+##Check outcome units##
+```{r}
+table(CAA$`Outcome unit (eg aberrations per cell)`)
+```
+All looks good, no need for conversions
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(CAA$`Outcome variability unit (eg std deviation)`, useNA = 'ifany')
+```
+Convert variability estimates to SDs and SEMs
+```{r}
+CAA = convert_varest(CAA)
+```
+
+Convert all responses to FC
+```{r}
+CAA = convert_to_FC(CAA, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+CAA = convert_concs(CAA, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+CAA = convert_CTassaytype(CAA)
+```
+
+Standardize scoring techniques
+```{r}
+CAA = convert_scoringTechnique(CAA)
+```
+
+##Check for cytotoxicity
+
+Due to scarcity of our data, we decided to keep a somewhat liberal survival threshold of 20%
+
+```{r}
+CAA$ct = CAA$`Relative survival (%)` >= 20
+```
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(CAA$ct) / nrow(CAA)
+CAA = CAA[CAA$ct == T,]
+```
+
+```{r}
+CAA = remove_few_obs_studies(CAA)
+```
+
+#Plotting the data
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(CAA$Author))
+length(unique(CAA$`Study index`))
+```
+We only have one study after data wrangling
+
+
+
+```{r,warning=F}
+doseres_plot(CAA, 'all data', assay = 'CAA_Assay', conc_col = 'Concentration ENU')
+```
+
+#Variance decomposition
+
+Since we only have one study for the CAA on ENU, we cannot perform a Variance decomposition but we can check out the r squared of the simplest linear model
+```{r}
+CAAmod = CAA
+names(CAAmod) = make.names(names(CAAmod)) 
+CAAmod = CAAmod[,c("Study.index", "Author", "DOI", "Concentration.ENU", "Time.of.harvest..h.", "FC", "ct")]
+```
+
+No imputation is needed because we have no missing data for any of the columns of interest
+
+```{r}
+model_CAA = lm(
+  FC ~ poly(Concentration.ENU, degree = 2),
+  data = CAAmod
+)
+```
+
+
+```{r}
+summary(model_CAA)$r.squared
+```
+
+
+----------
+ECDS assay
+----------
+
+
+##General data wrangling##
+
+General first steps in data wrangling
+```{r}
+#Read in the data
+ECDS = as.data.frame(read_excel(
+  '../rawData/202603201404_Data_from_literature_search_ENU_TK6.xlsx',
+  sheet = 'EC DS based mutation assay'))
+
+#Perform general wrangling 
+ECDS = generalwrangle(ECDS, conc_col = "Concentration ENU", ctthresh = 10) 
+
+#Convert data classess
+ECDS = correctclass(ECDS)
+```
+
+
+##Quality checks##
+
+Check if the data classes are as desired
+```{r}
+str(ECDS)
+```
+Looks good
+
+
+Check whether (and if so, where) subtraction from background occurred
+```{r}
+ECDS[which(ECDS$`Outcome for the treatment` == 0),]
+```
+Looks good
+
+
+Check if every observation has its own unique control
+```{r}
+sum(ECDS$`Concentration ENU` == 0)
+length(unique(ECDS$`Study index`))
+```
+Looks good
+
+Check for missing replicates
+```{r}
+table(ECDS$replicates, useNA = 'ifany')
+```
+We have no missing replicates
+
+Let's remove any studies with too few observations now
+```{r}
+ECDS = remove_few_obs_studies(ECDS)
+```
+
+
+##Check outcome units##
+
+```{r}
+table(ECDS$`Outcome unit`, useNA = 'ifany')
+```
+
+Convert all mutation frequencies to per million
+```{r}
+ECDS = convert_muta_to_perm(ECDS, unit_col = 'Outcome unit')
+```
+
+
+##Conversions
+
+Examine the different variability units that were used
+```{r}
+table(ECDS$`Outcome variability unit `, useNA = 'ifany')
+```
+
+Convert variability estimates to SDs and SEMs
+```{r}
+ECDS = convert_varest(ECDS)
+```
+
+Convert all responses to FC
+```{r}
+ECDS = convert_to_FC(ECDS, conc_col = 'Concentration ENU')
+```
+
+Convert all concentrations to uM
+```{r}
+ECDS = convert_concs(ECDS, ENU_g_per_mol)
+```
+
+Standardize naming for cytotox assays
+```{r}
+ECDS = convert_CTassaytype(ECDS)
+```
+
+Standardize scoring techniques
+```{r}
+ECDS = convert_scoringTechnique(ECDS)
+```
+
+Standardize locus naming
+```{r}
+ECDS = convert_locus_naming(ECDS)
+```
+
+
+##Check for cytotoxicity
+
+```{r}
+table(ECDS$`Relative survival (%)`, useNA = 'ifany')
+```
+
+We have no missing cytotox data
+
+
+Percentage of data that remains after removing highly cytotoxic observations
+```{r}
+sum(ECDS$ct) / nrow(ECDS)
+ECDS = ECDS[ECDS$ct == T,]
+```
+
+```{r}
+ECDS = remove_few_obs_studies(ECDS)
+```
+
+
+##Plotting the data
+
+Let's check for Authors that reported multiple experiments
+```{r}
+length(unique(ECDS$Author))
+length(unique(ECDS$`Study index`))
+```
+
+Define distinctive features of studies from the same paper
+```{r}
+ECDS$distinct = rep(NA, nrow(ECDS))
+
+ECDS$expression_period = (ECDS$`Time of harvest [h]` - ECDS$`Time of exposure [h]`) / 24
+
+#Cho 2023 paper
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Health Canada (HC)' & ECDS$`Time of harvest [h]` == 48] = 'conducted by HC, 48h harvest'
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Health Canada (HC)' & ECDS$`Time of harvest [h]` == 72] = 'conducted by HC, 72h harvest'
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Health Canada (HC)' & ECDS$`Time of harvest [h]` == 96] = 'conducted by HC, 96h harvest'
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Inotiv-RTP' & ECDS$`Time of harvest [h]` == 48] = 'conducted by Inotiv-RTP, 48h harvest'
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Inotiv-RTP' & ECDS$`Time of harvest [h]` == 72] = 'conducted by Inotiv-RTP, 72h harvest'
+ECDS$distinct[ECDS$DOI == '10.1016/j.mrgentox.2023.503649'& ECDS$Comments == 'Performed by Inotiv-RTP' & ECDS$`Time of harvest [h]` == 96] = 'conducted by Inotiv-RTP, 96h harvest'
+```
+
+```{r}
+doseres_plot(ECDS, 'all data', assay = 'ECDS_Assay', width = 12, conc_col = 'Concentration ENU')
+
+doseres_contrast(ECDS, "Harvest times and sequencing techniques", assay = 'ECDS_Assay', color_col = "Time of harvest [h]", shape_col = "Technique for scoring", conc_col = 'Concentration ENU', save = T, path = '../Figures/ConcRes_comparison/FigS1')
+```
+
+```{r}
+ECDSmod = ECDS
+names(ECDSmod) = make.names(names(ECDSmod))
+
+ECDSmod = prepare_varcomp(ECDSmod)
+
+ECDSmod = ECDSmod[,c('Study.index', 'Author', 'DOI', 'Concentration.ENU', 'Target.region', 'expression_period', 'Relative.survival....', 'Technique.for.scoring', 'FC', 'FClog')]
+```
+
+No need for imputation since we have data on all our explanatory variables of interest
+
+```{r,message=F,warning=F}
+model_ECDS = lmer(
+  FClog ~ poly(Concentration.ENU, degree = 2) +
+       Target.region +
+       expression_period  +
+       Relative.survival.... +
+       Technique.for.scoring +
+       (1|Author/DOI/Study.index),
+  data = ECDSmod
+)
+
+vc = as.data.frame(VarCorr(model_ECDS))
+vcovtot = sum(vc$vcov)
+vc$prop = vc$vcov / vcovtot
+
+ECDSVAR = partR2(model_ECDS, partvars = c("poly(Concentration.ENU, degree = 2)",
+                               "Target.region",
+                               "expression_period",
+                               "Relative.survival....",
+                               "Technique.for.scoring"
+                               ), R2_type = 'marginal')
+
+ECDSVAR$R2
+ECDSVAR$model = model_ECDS
+ECDSVAR$vc = vc
+```
+
+
+-------------
+Store results
+-------------
+
+#Variance component results
+```{r}
+ENU_VarComp = mget(c("cometVAR", "MNVAR", "gh2axVAR", "mutaVAR", "ECDSVAR"))
+saveRDS(ENU_VarComp, file = '../processedData/ENU_VarComp.rds')
+```
+
+#Wrangled dataframes
+```{r}
+ENUdata = mget(c("comet", "MN", "ECDS", "gh2ax", "muta"))
+saveRDS(ENUdata, file = '../processedData/ENUdata.rds')
+```

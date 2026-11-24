@@ -1,0 +1,424 @@
+---
+title: "Test"
+output: html_document
+date: "2026-06-21"
+---
+
+
+This experimental Rmd file takes the results of BMD analysis utilizing bootstrapping as input and aims to use that input to perform response-response modeling. Since concentrations between subsequent assays may not be well aligned. Dual responses from both assays at the same concentration might be scarce, we therefore supplement these scarce datasets of subsequent responses with artificial data gathered from fitted bootstrap curves. 
+
+Status: matching the data of subsequent KEs is successful, the fitting of response-response curves through these matched datasets using orthogonal distance regression is not yet successful.
+
+##Loading packages
+```{r,warning=F, message=F}
+library(minpack.lm)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(patchwork)
+library(purrr)
+library(tidyr)
+library(stringr)
+source('Functions_BMD.R')
+source('Functions_RR.R')
+```
+
+
+##Reading in data
+```{r}
+EMS_wpinput = readRDS('../processedData/EMS_wpinput.rds')
+MMS_wpinput = readRDS('../processedData/MMS_wpinput.rds')
+ENU_wpinput = readRDS('../processedData/ENU_wpinput.rds')
+
+EMS_subsets = readRDS('../processedData/EMS_subsets.rds')
+MMS_subsets = readRDS('../processedData/MMS_subsets.rds')
+ENU_subsets = readRDS('../processedData/ENU_subsets.rds')
+```
+
+```{r}
+alkyl_SIO = EMS_subsets$alkyl$data[[which(EMS_subsets$alkyl$subset_name == 'SIO')]]
+comet_hAAG_SIM = EMS_subsets$`Comet hAAG modified`$data[[which(EMS_subsets$`Comet hAAG modified`$subset_name == 'SIM')]]
+comet_SIM = EMS_subsets$`Comet Unmodified`$data[[which(EMS_subsets$`Comet Unmodified`$subset_name == 'SIM')]]
+gh2ax_SIF = EMS_subsets$gh2ax$data[[which(EMS_subsets$gh2ax == 'SIF')]]
+MN_SEMC = EMS_subsets$MN$data[[which(EMS_subsets$MN == 'SEMC')]]
+muta_SEOH = EMS_subsets$muta$data[[which(EMS_subsets$muta == 'SEOH')]]
+
+muta_SEOT = EMS_subsets$muta$data[[which(EMS_subsets$muta == 'SEOT')]]
+```
+
+
+
+
+##Actual analysis
+
+
+alkyl_SIO vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = alkyl_SIO,
+                      df2 = MN_SEMC,
+                      wpinput1 = EMS_wpinput$alkyl_SIO,
+                      wpinput2 = EMS_wpinput$MN_SEMC,
+                      main = 'DNA adducts vs MN assay',
+                      xlab = 'DPM',
+                      ylab = '% of MN cells (FC)', 
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+comet_hAAG vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = MN_SEMC,
+                      wpinput1 = EMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = EMS_wpinput$MN_SEMC,
+                      main = 'Comet + hAAG vs MN assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+alkyl_SIO vs comet_SIM
+```{r,warning=F}
+fit_response_response(df1 = alkyl_SIO,
+                      df2 = comet_SIM,
+                      wpinput1 = EMS_wpinput$alkyl_SIO,
+                      wpinput2 = EMS_wpinput$`Comet Unmodified_SIM`,
+                      main = 'DNA adducts vs comet assay',
+                      xlab = 'DPM',
+                      ylab = '% of DNA in tail (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+
+comet_hAAG vs comet_SIM
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = comet_SIM,
+                      wpinput1 = EMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = EMS_wpinput$`Comet Unmodified_SIM`,
+                      main = 'Comet + hAAG vs Unmodified Comet',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of DNA in tail (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+alkyl_SIO vs gh2ax_SIF
+```{r,warning=F}
+fit_response_response(df1 = alkyl_SIO,
+                      df2 = gh2ax_SIF,
+                      wpinput1 = EMS_wpinput$alkyl_SIO,
+                      wpinput2 = EMS_wpinput$gh2ax_SIF,
+                      main = 'DNA adducts vs γH2AX assay',
+                      xlab = 'DPM',
+                      ylab = 'H2AX intensity (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+comet_hAAG vs gh2ax_SIF
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = gh2ax_SIF,
+                      wpinput1 = EMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = EMS_wpinput$gh2ax_SIF,
+                      main = 'Comet + hAAG vs γH2AX assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = 'H2AX intensity (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+comet_SIM vs muta_SEOH
+```{r,warning=F}
+fit_response_response(df1 = comet_SIM,
+                      df2 = muta_SEOH,
+                      wpinput1 = EMS_wpinput$`Comet Unmodified_SIM`,
+                      wpinput2 = EMS_wpinput$muta_SEOH,
+                      main = 'Comet assay vs HPRT mutations',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+comet_SIM vs muta_SEOT
+```{r,warning=F}
+fit_response_response(df1 = comet_SIM,
+                      df2 = muta_SEOT,
+                      wpinput1 = EMS_wpinput$`Comet Unmodified_SIM`,
+                      wpinput2 = EMS_wpinput$muta_SEOT,
+                      main = 'Comet assay vs TK mutations',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs muta_SEOH
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = muta_SEOH,
+                      wpinput1 = EMS_wpinput$gh2ax_SIF,
+                      wpinput2 = EMS_wpinput$muta_SEOH,
+                      main = 'γH2AX assay vs HPRT mutations',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs muta_SEOT
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = muta_SEOT,
+                      wpinput1 = EMS_wpinput$gh2ax_SIF,
+                      wpinput2 = EMS_wpinput$muta_SEOT,
+                      main = 'γH2AX assay vs TK mutations',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+comet_SIM vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = comet_SIM,
+                      df2 = MN_SEMC,
+                      wpinput1 = EMS_wpinput$`Comet Unmodified_SIM`,
+                      wpinput2 = EMS_wpinput$MN_SEMC,
+                      main = 'Comet assay vs MN assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = MN_SEMC,
+                      wpinput1 = EMS_wpinput$gh2ax_SIF,
+                      wpinput2 = EMS_wpinput$MN_SEMC,
+                      main = 'γH2AX assay vs MN assay',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/Fig5/',
+                      zoom = 3)
+```
+
+##Repeat for MMS
+
+```{r}
+comet_hAAG_SIM = MMS_subsets$`Comet hAAG modified`$data[[which(MMS_subsets$`Comet hAAG modified`$subset_name == 'SIM')]]
+comet_SIM = MMS_subsets$`Comet Unmodified`$data[[which(MMS_subsets$`Comet Unmodified`$subset_name == 'SIM')]]
+gh2ax_SIF = MMS_subsets$gh2ax$data[[which(MMS_subsets$gh2ax == 'SIF')]]
+MN_SEMC = MMS_subsets$MN$data[[which(MMS_subsets$MN == 'SEMC')]]
+muta_SEOT = MMS_subsets$muta$data[[which(MMS_subsets$muta == 'SEOT')]]
+```
+
+
+
+comet_hAAG vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = MN_SEMC,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = MMS_wpinput$MN_SEMC,
+                      main = 'Comet + hAAG vs MN assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+
+comet_hAAG vs comet_SIM
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = comet_SIM,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = MMS_wpinput$`Comet Unmodified_SIM`,
+                      main = 'Comet + hAAG vs Unmodified Comet',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of DNA in tail (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+
+comet_hAAG vs gh2ax_SIF
+```{r,warning=F}
+fit_response_response(df1 = comet_hAAG_SIM,
+                      df2 = gh2ax_SIF,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$`Comet hAAG modified_SIM`,
+                      wpinput2 = MMS_wpinput$gh2ax_SIF,
+                      main = 'Comet + hAAG vs γH2AX assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = 'H2AX intensity (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+comet_SIM vs muta_SEOT
+```{r,warning=F}
+fit_response_response(df1 = comet_SIM,
+                      df2 = muta_SEOT,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$`Comet Unmodified_SIM`,
+                      wpinput2 = MMS_wpinput$muta_SEOT,
+                      main = 'Comet assay vs TK mutations',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs muta_SEOT
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = muta_SEOT,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$gh2ax_SIF,
+                      wpinput2 = MMS_wpinput$muta_SEOT,
+                      main = 'γH2AX assay vs TK mutations',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+comet_SIM vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = comet_SIM,
+                      df2 = MN_SEMC,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$`Comet Unmodified_SIM`,
+                      wpinput2 = MMS_wpinput$MN_SEMC,
+                      main = 'Comet assay vs MN assay',
+                      xlab = '% of DNA in tail (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs MN_SEMC
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = MN_SEMC,
+                      conc_col = 'Concentration MMS',
+                      wpinput1 = MMS_wpinput$gh2ax_SIF,
+                      wpinput2 = MMS_wpinput$MN_SEMC,
+                      main = 'γH2AX assay vs MN assay',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/FigS5/',
+                      zoom = 3)
+```
+
+##Repeat for ENU
+
+```{r}
+gh2ax_SIF = ENU_subsets$gh2ax$data[[which(ENU_subsets$gh2ax == 'SIF')]]
+MN_SEFC = ENU_subsets$MN$data[[which(ENU_subsets$MN == 'SEFC')]]
+muta_LLOT = ENU_subsets$muta$data[[which(ENU_subsets$muta == 'LLOT')]]
+ECDS_LEOT = ENU_subsets$ECDS$data[[which(ENU_subsets$ECDS == 'LEOT')]]
+
+gh2ax_LIF = ENU_subsets$gh2ax$data[[which(ENU_subsets$gh2ax == 'LIF')]]
+MN_LIFC = ENU_subsets$MN$data[[which(ENU_subsets$MN == 'LIFC')]]
+```
+
+
+
+gh2ax_SIF vs MN_SEFC
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = MN_SEFC,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_SIF,
+                      wpinput2 = ENU_wpinput$MN_SEFC,
+                      main = 'γH2AX assay vs MN assay',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+
+gh2ax_LIF vs MN_LIFC
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_LIF,
+                      df2 = MN_LIFC,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_LIF,
+                      wpinput2 = ENU_wpinput$MN_LIFC,
+                      main = 'γH2AX assay vs MN assay',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = '% of MN cells (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+
+gh2ax_SIF vs muta_LLOT
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = muta_LLOT,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_SIF,
+                      wpinput2 = ENU_wpinput$muta_LLOT,
+                      main = 'γH2AX assay vs TK mutations',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+gh2ax_LIF vs muta_LLOT
+```{r,warning=F}
+fit_response_response(df1 = gh2ax_LIF,
+                      df2 = muta_LLOT,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_LIF,
+                      wpinput2 = ENU_wpinput$muta_LLOT,
+                      main = 'γH2AX assay vs TK mutations',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+gh2ax_SIF vs ECDS LEOT
+```{r}
+fit_response_response(df1 = gh2ax_SIF,
+                      df2 = ECDS_LEOT,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_SIF,
+                      wpinput2 = ENU_wpinput$ECDS_LEOT,
+                      main = 'γH2AX assay vs ECDS',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+gh2ax_LIF vs ECDS LEOT
+```{r}
+fit_response_response(df1 = gh2ax_LIF,
+                      df2 = ECDS_LEOT,
+                      conc_col = 'Concentration ENU',
+                      wpinput1 = ENU_wpinput$gh2ax_LIF,
+                      wpinput2 = ENU_wpinput$ECDS_LEOT,
+                      main = 'γH2AX assay vs ECDS',
+                      xlab = 'H2AX intensity (FC)',
+                      ylab = 'Mutation Frequency (FC)',
+                      savepath = '../Figures/Response-Response/ENU/',
+                      zoom = 3)
+```
+
+
